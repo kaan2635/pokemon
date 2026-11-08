@@ -3,6 +3,7 @@ import { MAPS } from '../data/maps';
 import { POKEDEX } from '../data/pokedex';
 import { GYM_BADGES } from '../data/trainersAndGyms';
 import { TYPE_COLORS, TYPE_NAMES_TR } from '../data/typesAndNatures';
+import { assetUrl } from '../utils/assetPath';
 import { Compass, MapPin, Radar, Award, Plane, X, Sparkles } from 'lucide-react';
 
 interface PokeNavModalProps {
@@ -150,7 +151,7 @@ export const PokeNavModal: React.FC<PokeNavModalProps> = ({
                     >
                       <div className="flex items-center gap-3">
                         <img
-                          src={`/sprites/front/${sp.id}.png`}
+                          src={assetUrl(`sprites/front/${sp.id}.png`)}
                           alt={sp.name}
                           style={{ imageRendering: 'pixelated' }}
                           className={`w-14 h-14 bg-slate-900 rounded-lg p-1 ${
@@ -164,7 +165,7 @@ export const PokeNavModal: React.FC<PokeNavModalProps> = ({
                             </span>
                             {isCaught && (
                               <img
-                                src="/sprites/items/poke-ball.png"
+                                src={assetUrl('sprites/items/poke-ball.png')}
                                 alt="Yakalandı"
                                 className="w-4 h-4"
                               />
@@ -284,7 +285,7 @@ export const PokeNavModal: React.FC<PokeNavModalProps> = ({
                     }`}
                   >
                     <img
-                      src={`/sprites/front/${g.aceSpeciesId}.png`}
+                      src={assetUrl(`sprites/front/${g.aceSpeciesId}.png`)}
                       alt={g.leaderNameTr}
                       style={{ imageRendering: 'pixelated' }}
                       className="w-14 h-14 bg-slate-900 rounded-xl p-1 shrink-0"

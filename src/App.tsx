@@ -6,6 +6,7 @@ import { PartyAndBoxModal } from './components/PartyAndBoxModal';
 import { PinballModal } from './components/PinballModal';
 import { PokedexModal } from './components/PokedexModal';
 import { PokeNavModal } from './components/PokeNavModal';
+import { RaidAndWonderModal, RaidDenEntry } from './components/RaidAndWonderModal';
 import { isQuestReadyToClaim, RescueBoardModal } from './components/RescueBoardModal';
 import { StarterLabModal } from './components/StarterLabModal';
 import { TitleScreen } from './components/TitleScreen';
@@ -15,10 +16,11 @@ import { MOVES } from './data/moves';
 import { POKEDEX } from './data/pokedex';
 import { RESCUE_QUESTS } from './data/quests';
 import { getRivalStarterLine, GYM_BADGES, TRAINERS } from './data/trainersAndGyms';
-import { NATURE_LIST } from './data/typesAndNatures';
+import { ABILITIES, NATURE_LIST } from './data/typesAndNatures';
 import { audio } from './engine/audio';
 import {
   createPokemon,
+  createRaidBossPokemon,
   evolvePokemonInstance,
   generateBattleFactoryPool,
   grantExpToPokemon,
@@ -42,6 +44,7 @@ import {
   SaveState,
   TrainerData,
 } from './types/game';
+import { assetUrl } from './utils/assetPath';
 import {
   Award,
   Backpack,
@@ -50,6 +53,7 @@ import {
   Compass,
   Download,
   FastForward,
+  Flame,
   Save,
   ScrollText,
   Users,
@@ -80,6 +84,8 @@ export default function App() {
     | 'stone_mart'
     | 'tm_mart'
     | 'bp_mart'
+    | 'mega_mart'
+    | 'raid_hub'
     | 'pokenav'
     | 'pokedex'
     | 'rescue'
@@ -106,6 +112,7 @@ export default function App() {
   const [battleConfig, setBattleConfig] = useState<BattleSessionConfig | null>(null);
   const [pendingTrainerFlag, setPendingTrainerFlag] = useState<string | null>(null);
   const [frontierRun, setFrontierRun] = useState<FrontierRunState | null>(null);
+  const [activeRaid, setActiveRaid] = useState<RaidDenEntry | null>(null);
 
   // Canvas & Smooth Overworld Movement Refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -219,6 +226,7 @@ export default function App() {
 
       return trainer.party.map((spec) => {
         let sid = spec.speciesId;
+        let heldItem = spec.heldItem;
         // Substitute Rival's counter-starter line dynamically!
         if (trainer.id === 'rival_lab') sid = r1;
         else if (trainer.id === 'rival_cerulean' && spec.speciesId === 5) sid = r2;
@@ -227,9 +235,20 @@ export default function App() {
           spec.speciesId === 6
         ) {
           sid = r3;
+          if (trainer.id === 'champion_blue') {
+            const megaMap: Record<number, string> = {
+              3: 'venusaurite',
+              6: 'charizardite-x',
+              9: 'blastoisinite',
+              254: 'sceptilite',
+              257: 'blazikenite',
+              260: 'swampertite',
+            };
+            heldItem = megaMap[r3] || spec.heldItem;
+          }
         }
         return createPokemon(sid, spec.level + levelBump, {
-          heldItem: spec.heldItem,
+          heldItem,
           customMoves: spec.moves,
           customAbility: spec.ability,
           customNature: spec.nature,
@@ -482,7 +501,8 @@ export default function App() {
         npc.role === 'mart' ||
         npc.role === 'stone_mart' ||
         npc.role === 'tm_mart' ||
-        npc.role === 'bp_mart'
+        npc.role === 'bp_mart' ||
+        npc.role === 'mega_mart'
       ) {
         setActiveModal(npc.role);
         return;
@@ -1198,6 +1218,24 @@ export default function App() {
       nextSave.flags = nextFlags;
     }
 
+    // Raid Den Victory / Catch Bonus Rewards!
+    if (cfg.kind === 'raid' && activeRaid && (outcome.result === 'win' || outcome.result === 'caught')) {
+      const stoneId = activeRaid.rewardMegaStone;
+      nextSave.bag = {
+        ...nextSave.bag,
+        [stoneId]: (nextSave.bag[stoneId] || 0) + 1,
+        'rare-candy': (nextSave.bag['rare-candy'] || 0) + 1,
+      };
+      nextSave.battlePoints += 8;
+      nextSave.money += 1800;
+      extraMessages.push(
+        `⚡ ALFA AKIN ZAFERİ! ${ITEMS[stoneId]?.nameTr}, 1x Nadir Şeker, +8 BP ve ₽1.800 kazandın!`
+      );
+      setActiveRaid(null);
+    } else if (cfg.kind === 'raid') {
+      setActiveRaid(null);
+    }
+
     setSave(nextSave);
     setPendingTrainerFlag(null);
     if (extraMessages.length > 0) {
@@ -1253,7 +1291,49 @@ export default function App() {
     if (!mon || !it) return 'Geçersiz seçim.';
     const sp = POKEDEX[mon.speciesId];
 
-    // 1. Rare Candy
+    // 1. Ability Capsule (GBA ROM-Hack QoL!)
+    if (it.abilityCapsule) {
+      if (sp.abilities.length < 2) {
+        return `${sp.name} yalnızca tek bir doğal yeteneğe (${ABILITIES[mon.ability]?.nameTr}) sahip.`;
+      }
+      const nextAbility = mon.ability === sp.abilities[0] ? sp.abilities[1] : sp.abilities[0];
+      audio.playSfx('level_up');
+      setSave((prev) => {
+        if (!prev) return prev;
+        const nextBag = { ...prev.bag, [itemId]: (prev.bag[itemId] || 1) - 1 };
+        if (nextBag[itemId] <= 0) delete nextBag[itemId];
+        return {
+          ...prev,
+          bag: nextBag,
+          party: prev.party.map((m, i) =>
+            i === partyIdx ? { ...m, ability: nextAbility, baseAbility: undefined } : m
+          ),
+        };
+      });
+      return `${sp.name} yeteneği ${ABILITIES[nextAbility]?.nameTr} olarak değiştirildi!`;
+    }
+
+    // 1b. Equip Held Item / Mega Stone directly from Bag!
+    if (it.category === 'held_berry') {
+      audio.playSfx('select');
+      setSave((prev) => {
+        if (!prev) return prev;
+        const nextBag = { ...prev.bag };
+        if (mon.heldItem) {
+          nextBag[mon.heldItem] = (nextBag[mon.heldItem] || 0) + 1;
+        }
+        nextBag[itemId] = (nextBag[itemId] || 1) - 1;
+        if (nextBag[itemId] <= 0) delete nextBag[itemId];
+        return {
+          ...prev,
+          bag: nextBag,
+          party: prev.party.map((m, i) => (i === partyIdx ? { ...m, heldItem: itemId } : m)),
+        };
+      });
+      return `${it.nameTr}, ${sp.name} üzerine tutturuldu!`;
+    }
+
+    // 1c. Rare Candy
     if (it.rareCandy) {
       if (mon.level >= 100) return `${sp.name} zaten Seviye 100!`;
       const needed = mon.nextLevelExp - mon.exp;
@@ -1386,6 +1466,37 @@ export default function App() {
     return 'Eşya kullanılamadı.';
   };
 
+  const handleRelearnMove = (partyIdx: number, moveId: string, replaceMoveIdx?: number): string => {
+    if (!save) return '';
+    const mon = save.party[partyIdx];
+    const md = MOVES[moveId];
+    if (!mon || !md) return 'Hamle bulunamadı.';
+    const sp = POKEDEX[mon.speciesId];
+    if (mon.moves.some((m) => m.moveId === moveId)) {
+      return `${sp.name} zaten ${md.nameTr} biliyor!`;
+    }
+    let nextMoves = [...mon.moves];
+    if (nextMoves.length < 4) {
+      nextMoves.push({ moveId: md.id, pp: md.pp, maxPp: md.pp });
+    } else if (replaceMoveIdx !== undefined) {
+      nextMoves = nextMoves.map((sl, idx) =>
+        idx === replaceMoveIdx ? { moveId: md.id, pp: md.pp, maxPp: md.pp } : sl
+      );
+    } else {
+      return '4 hamle dolu!';
+    }
+    audio.playSfx('level_up');
+    setSave((prev) =>
+      prev
+        ? {
+            ...prev,
+            party: prev.party.map((m, i) => (i === partyIdx ? { ...m, moves: nextMoves } : m)),
+          }
+        : prev
+    );
+    return `${sp.name}, ${md.nameTr} hamlesini yeniden hatırladı!`;
+  };
+
   // ==================== TITLE SCREEN IF NO ACTIVE SESSION ====================
   if (!save) {
     return (
@@ -1459,7 +1570,7 @@ export default function App() {
                 title={`${POKEDEX[m.speciesId].name} Lv.${m.level} (${m.currentHp}/${m.maxHp})`}
                 className="flex items-center gap-1 px-1.5 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800"
               >
-                <img src={`/sprites/icons/${m.speciesId}.png`} alt="" className="w-6 h-6" />
+                <img src={assetUrl(`sprites/icons/${m.speciesId}.png`)} alt="" className="w-6 h-6" />
                 <div className="text-left">
                   <div className="text-[10px] font-bold text-white leading-none">L{m.level}</div>
                   <div className="w-8 h-1 bg-slate-700 rounded-full overflow-hidden mt-0.5">
@@ -1502,6 +1613,15 @@ export default function App() {
           >
             <Users className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Takım &amp; PC</span>
+          </button>
+
+          <button
+            onClick={() => setActiveModal('raid_hub')}
+            className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-fuchsia-600 to-rose-600 hover:brightness-110 text-white font-black text-xs flex items-center gap-1 shadow-md border border-fuchsia-400/50"
+            title="Mega Taş Galerisi, Dinamaks Akın İnleri (Raid Dens) ve Harika Takas (Wonder Trade)"
+          >
+            <Flame className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">✨ Mega &amp; Akın</span>
           </button>
 
           {save.party.length > 0 && (
@@ -1809,6 +1929,15 @@ export default function App() {
               heldItem: 'oran-berry',
               metLocation: 'Prof. Oak Laboratuvarı',
             });
+            const starterMegaGift: Record<number, string> = {
+              1: 'venusaurite',
+              4: 'charizardite-x',
+              7: 'blastoisinite',
+              252: 'sceptilite',
+              255: 'blazikenite',
+              258: 'swampertite',
+            };
+            const giftStone = starterMegaGift[speciesId] || 'gengarite';
             setActiveModal(null);
             setSave((prev) =>
               prev
@@ -1816,6 +1945,11 @@ export default function App() {
                     ...prev,
                     starterSpeciesId: speciesId,
                     party: [starter],
+                    bag: {
+                      ...prev.bag,
+                      'mega-ring': 1,
+                      [giftStone]: (prev.bag[giftStone] || 0) + 1,
+                    },
                     flags: { ...prev.flags, has_starter: true },
                     pokedexSeen: [speciesId],
                     pokedexCaught: [speciesId],
@@ -1825,6 +1959,7 @@ export default function App() {
             pushDialogue(
               [
                 `Muhteşem seçim! ${POKEDEX[speciesId].name} artık senin en sadık yol arkadaşın ve haritada seni takip edecek!`,
+                `Ayrıca sana Kalos & Hoenn araştırmalarımdan ✨ Mega Bileklik ve ${ITEMS[giftStone]?.nameTr} hediye ediyorum! Pokémonun son evrimine ulaştığında bu taşı tutturup savaşta MEGA EVRİM açabilirsin!`,
                 `Rakibin ${save.rivalName} da hemen karşı avantajlı Pokémonu aldı! Çıkmadan önce onunla ilk maçını yapabilirsin!`,
               ],
               'Prof. Oak'
@@ -1871,6 +2006,7 @@ export default function App() {
             });
           }}
           onUseItemOnParty={handleUseItemOnParty}
+          onRelearnMove={handleRelearnMove}
           onDepositToBox={(partyIdx) => {
             setSave((prev) => {
               if (!prev || prev.party.length <= 1) return prev;
@@ -1901,7 +2037,8 @@ export default function App() {
         activeModal === 'mart' ||
         activeModal === 'stone_mart' ||
         activeModal === 'tm_mart' ||
-        activeModal === 'bp_mart') && (
+        activeModal === 'bp_mart' ||
+        activeModal === 'mega_mart') && (
         <BagAndMartModal
           mode={activeModal}
           bag={save.bag}
@@ -1957,6 +2094,100 @@ export default function App() {
               return handleUseItemOnParty(partyIdx, itemId);
             }
             return '';
+          }}
+        />
+      )}
+
+      {/* 3b. Mega Hub: Dynamax/Alpha Raid Dens + Mega Stone Gallery + Wonder Trade */}
+      {activeModal === 'raid_hub' && (
+        <RaidAndWonderModal
+          party={save.party}
+          pcBox={save.pcBox}
+          bag={save.bag}
+          money={save.money}
+          battlePoints={save.battlePoints}
+          onClose={() => setActiveModal(null)}
+          onStartRaid={(raid, scaledLv) => {
+            if (save.party.length === 0 || !save.party.some((m) => m.currentHp > 0)) {
+              showToast('Savaşabilecek sağlıklı bir Pokémonun yok!');
+              return;
+            }
+            const boss = createRaidBossPokemon(raid.speciesId, scaledLv);
+            setActiveRaid(raid);
+            setActiveModal(null);
+            setBattleConfig({
+              kind: 'raid',
+              enemyParty: [boss],
+              weatherInitial: 'clear',
+              terrain: 'cave',
+            });
+          }}
+          onBuyMegaStone={(itemId, useBp) => {
+            const it = ITEMS[itemId];
+            if (!it) return 'Eşya bulunamadı.';
+            const cost = useBp ? it.bpPrice || 24 : it.price;
+            if (useBp) {
+              if (save.battlePoints < cost) return `Yeterli BP yok! (${cost} BP gerekli)`;
+              audio.playSfx('select');
+              setSave((p) =>
+                p
+                  ? {
+                      ...p,
+                      battlePoints: p.battlePoints - cost,
+                      bag: { ...p.bag, [itemId]: (p.bag[itemId] || 0) + 1 },
+                    }
+                  : p
+              );
+              return `${it.nameTr} BP ile satın alındı!`;
+            }
+            if (save.money < cost) return `Yeterli paran yok! (₽${cost.toLocaleString('tr-TR')} gerekli)`;
+            audio.playSfx('select');
+            setSave((p) =>
+              p
+                ? {
+                    ...p,
+                    money: p.money - cost,
+                    bag: { ...p.bag, [itemId]: (p.bag[itemId] || 0) + 1 },
+                  }
+                : p
+            );
+            return `${it.nameTr} satın alındı! Takım ekranından Pokémonuna tutturabilirsin.`;
+          }}
+          onWonderTradeBox={(boxIdx, incoming) => {
+            audio.playSfx('catch_success');
+            setSave((prev) => {
+              if (!prev) return prev;
+              const oldItem = prev.pcBox[boxIdx]?.heldItem;
+              const nextBag = oldItem
+                ? { ...prev.bag, [oldItem]: (prev.bag[oldItem] || 0) + 1 }
+                : prev.bag;
+              const nextBox = prev.pcBox.map((m, i) => (i === boxIdx ? incoming : m));
+              return {
+                ...prev,
+                bag: nextBag,
+                pcBox: nextBox,
+                pokedexSeen: Array.from(new Set([...prev.pokedexSeen, incoming.speciesId])),
+                pokedexCaught: Array.from(new Set([...prev.pokedexCaught, incoming.speciesId])),
+              };
+            });
+          }}
+          onWonderTradeParty={(partyIdx, incoming) => {
+            audio.playSfx('catch_success');
+            setSave((prev) => {
+              if (!prev || prev.party.length <= 1) return prev;
+              const oldItem = prev.party[partyIdx]?.heldItem;
+              const nextBag = oldItem
+                ? { ...prev.bag, [oldItem]: (prev.bag[oldItem] || 0) + 1 }
+                : prev.bag;
+              const nextParty = prev.party.map((m, i) => (i === partyIdx ? incoming : m));
+              return {
+                ...prev,
+                bag: nextBag,
+                party: nextParty,
+                pokedexSeen: Array.from(new Set([...prev.pokedexSeen, incoming.speciesId])),
+                pokedexCaught: Array.from(new Set([...prev.pokedexCaught, incoming.speciesId])),
+              };
+            });
           }}
         />
       )}
@@ -2148,7 +2379,7 @@ export default function App() {
                   className="p-3 rounded-xl bg-slate-950 hover:bg-cyan-950/60 border border-slate-700 hover:border-cyan-400 text-center"
                 >
                   <img
-                    src={`/sprites/front/${em.speciesId}.png`}
+                    src={assetUrl(`sprites/front/${em.speciesId}.png`)}
                     alt=""
                     className="w-14 h-14 mx-auto"
                   />
@@ -2273,7 +2504,7 @@ export default function App() {
                   }}
                   className="w-full p-3 rounded-xl bg-slate-950 hover:bg-amber-950/50 disabled:opacity-40 border border-slate-800 flex items-center gap-3 text-left"
                 >
-                  <img src={`/sprites/icons/${sid}.png`} alt="" className="w-8 h-8" />
+                  <img src={assetUrl(`sprites/icons/${sid}.png`)} alt="" className="w-8 h-8" />
                   <span className="text-xs font-bold text-white">
                     {label} {hasIt ? '(Canlandır!)' : '(Yok)'}
                   </span>

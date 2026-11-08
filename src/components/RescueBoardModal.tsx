@@ -3,6 +3,7 @@ import { ITEMS } from '../data/items';
 import { POKEDEX } from '../data/pokedex';
 import { getRescueRank, RESCUE_QUESTS } from '../data/quests';
 import { RescueQuest, SaveState } from '../types/game';
+import { assetUrl } from '../utils/assetPath';
 import { Award, CheckCircle2, ScrollText, X } from 'lucide-react';
 
 interface RescueBoardModalProps {
@@ -97,7 +98,7 @@ export const RescueBoardModal: React.FC<RescueBoardModalProps> = ({
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <img
-                        src={`/sprites/icons/${q.clientSpeciesId}.png`}
+                        src={assetUrl(`sprites/icons/${q.clientSpeciesId}.png`)}
                         alt=""
                         style={{ imageRendering: 'pixelated' }}
                         className="w-8 h-8"

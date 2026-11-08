@@ -5,6 +5,7 @@ import { POKEDEX } from '../data/pokedex';
 import { ABILITIES } from '../data/typesAndNatures';
 import { generateBattleFactoryPool } from '../engine/pokemonFactory';
 import { PokemonInstance } from '../types/game';
+import { assetUrl } from '../utils/assetPath';
 import { Castle, Cpu, Swords, Trophy, X } from 'lucide-react';
 
 interface BattleFrontierModalProps {
@@ -93,7 +94,7 @@ export const BattleFrontierModal: React.FC<BattleFrontierModalProps> = ({
                     className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-3"
                   >
                     <img
-                      src={`/sprites/front/${m.speciesId}.png`}
+                      src={assetUrl(`sprites/front/${m.speciesId}.png`)}
                       alt={sp.name}
                       style={{ imageRendering: 'pixelated' }}
                       className="w-14 h-14"
@@ -141,7 +142,7 @@ export const BattleFrontierModal: React.FC<BattleFrontierModalProps> = ({
                   >
                     <div className="flex items-center gap-2.5">
                       <img
-                        src={`/sprites/front/${m.speciesId}.png`}
+                        src={assetUrl(`sprites/front/${m.speciesId}.png`)}
                         alt={sp.name}
                         style={{ imageRendering: 'pixelated' }}
                         className="w-14 h-14 bg-slate-900 rounded-lg p-1"

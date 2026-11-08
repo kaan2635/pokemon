@@ -1,15 +1,17 @@
 import { Direction, MapData, NpcData, WeatherType } from '../types/game';
+import { assetUrl } from '../utils/assetPath';
 
 const TILE = 32;
 
 const imageCache = new Map<string, HTMLImageElement>();
 
 export function getCachedImage(src: string): HTMLImageElement | null {
-  let img = imageCache.get(src);
+  const resolved = assetUrl(src);
+  let img = imageCache.get(resolved);
   if (!img) {
     img = new Image();
-    img.src = src;
-    imageCache.set(src, img);
+    img.src = resolved;
+    imageCache.set(resolved, img);
   }
   return img.complete && img.naturalWidth > 0 ? img : null;
 }
@@ -563,7 +565,7 @@ export function renderOverworld(params: RenderOverworldParams) {
           ctx.beginPath();
           ctx.arc(nx + 16, ny + 16, pulse, 0, Math.PI * 2);
           ctx.fill();
-          const img = getCachedImage(`/sprites/front/${npc.legendarySpeciesId}.png`);
+          const img = getCachedImage(`sprites/front/${npc.legendarySpeciesId}.png`);
           if (img) {
             const floatY = Math.sin(tick * 0.08) * 2.5;
             ctx.drawImage(img, nx - 8, ny - 14 + floatY, 48, 48);
@@ -601,7 +603,7 @@ export function renderOverworld(params: RenderOverworldParams) {
         ctx.beginPath();
         ctx.ellipse(fx + 16, fy + 28, 8, 3, 0, 0, Math.PI * 2);
         ctx.fill();
-        const icon = getCachedImage(`/sprites/icons/${followerSpeciesId}.png`);
+        const icon = getCachedImage(`sprites/icons/${followerSpeciesId}.png`);
         if (icon) {
           ctx.drawImage(icon, fx, fy - 4 - bounce, 32, 32);
         }

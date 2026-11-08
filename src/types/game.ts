@@ -15,7 +15,8 @@ export type PokemonType =
   | 'Ghost'
   | 'Dragon'
   | 'Dark'
-  | 'Steel';
+  | 'Steel'
+  | 'Fairy';
 
 export type StatKey = 'hp' | 'atk' | 'def' | 'spa' | 'spd' | 'spe';
 export type BattleStatKey = 'atk' | 'def' | 'spa' | 'spd' | 'spe' | 'acc' | 'eva';
@@ -100,6 +101,20 @@ export interface MoveSlot {
   maxPp: number;
 }
 
+export interface MegaFormData {
+  id: string;
+  baseSpeciesId: number;
+  spriteId: number; // PokeAPI sprite ID (e.g. 10034)
+  nameTr: string;
+  types: [PokemonType] | [PokemonType, PokemonType];
+  baseStats: Record<StatKey, number>;
+  ability: string;
+  requiredItem?: string;
+  requiredMove?: string;
+  isPrimal?: boolean;
+  descTr: string;
+}
+
 export interface PokemonInstance {
   uid: string;
   speciesId: number;
@@ -122,6 +137,10 @@ export interface PokemonInstance {
   happiness: number;
   metLocation: string;
   pokeball: string;
+  // Transient in-battle states (cleared at battle end)
+  megaFormId?: string;
+  baseAbility?: string;
+  isRaidBoss?: boolean;
 }
 
 export type ItemCategory = 'medicine' | 'balls' | 'evo_tm' | 'held_berry' | 'key';
@@ -147,6 +166,8 @@ export interface ItemData {
   rareCandy?: boolean;
   ppRestore?: number;
   repelSteps?: number;
+  megaStoneFor?: number;
+  abilityCapsule?: boolean;
 }
 
 export type Direction = 'up' | 'down' | 'left' | 'right';
@@ -199,6 +220,7 @@ export interface NpcData {
     | 'stone_mart'
     | 'tm_mart'
     | 'bp_mart'
+    | 'mega_mart'
     | 'oak_starter'
     | 'trainer'
     | 'gym_leader'

@@ -1243,6 +1243,18 @@ export const MAPS: Record<string, MapData> = {
         dialogueTr: ['Celadon Büyük AVM 4. Kat! Tüm Evrim Taşları ve GBA Tutulan Eşyalar burada!'],
       },
       {
+        id: 'celadon_mega_guru',
+        nameTr: 'Mega Taş Ustası Gurkinn',
+        x: 17,
+        y: 4,
+        dir: 'down',
+        spriteType: 'scientist',
+        role: 'mega_mart',
+        dialogueTr: [
+          'Kalos Kulesi ve Hoenn Gök Sütunundan topladığım 30 Mega Taş ve İlkel Küreyi Celadon Büyük AVM\'ye getirdim! Ayrıca üst menüdeki ✨ MEGA butonundan Akın İnlerine de girebilirsin!',
+        ],
+      },
+      {
         id: 'celadon_tm_mart',
         nameTr: 'AVM TM Teknik Ustası',
         x: 19,
@@ -1293,6 +1305,7 @@ export const MAPS: Record<string, MapData> = {
     groundItems: [
       { id: 'celadon_leafstone', x: 3, y: 15, itemId: 'leaf-stone', count: 1 },
       { id: 'celadon_leftovers', x: 21, y: 15, itemId: 'leftovers', count: 1 },
+      { id: 'celadon_gardevoirite', x: 11, y: 10, itemId: 'gardevoirite', count: 1 },
     ],
     signs: [
       { x: 13, y: 4, textTr: ['CELADON BÜYÜK AVM — Sol Kapı: Evrim Taşları & Eşyalar | Sağ Kapı: TM Reyonu'] },

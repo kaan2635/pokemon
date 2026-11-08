@@ -1,4 +1,5 @@
 import { ITEMS } from '../data/items';
+import { getActiveDisplayName, getActiveTypes } from '../data/megaEvolutions';
 import { MOVES } from '../data/moves';
 import { POKEDEX } from '../data/pokedex';
 import { ABILITIES, getTypeEffectiveness } from '../data/typesAndNatures';
@@ -51,8 +52,8 @@ export function applyEntryAbilities(
   opponent: PokemonInstance,
   currentWeather: WeatherType
 ): EntryTriggerResult {
-  const spName = entering.nickname || POKEDEX[entering.speciesId].name;
-  const oppName = opponent.nickname || POKEDEX[opponent.speciesId].name;
+  const spName = getActiveDisplayName(entering);
+  const oppName = getActiveDisplayName(opponent);
   const logs: string[] = [];
   let newWeather: WeatherType | undefined;
   let foeAtkDrop: number | undefined;
@@ -64,6 +65,15 @@ export function applyEntryAbilities(
       foeAtkDrop = -1;
       logs.push(`${spName} Gözdağı (Intimidate) yeteneğiyle ${oppName} Saldırısını düşürdü!`);
     }
+  } else if (entering.ability === 'primordial_sea') {
+    newWeather = 'rain';
+    logs.push(`${spName} İlkel Okyanus (Primordial Sea) fırtınasını başlattı! Ateş saldırıları tamamen söndü!`);
+  } else if (entering.ability === 'desolate_land') {
+    newWeather = 'sun';
+    logs.push(`${spName} Kavurucu Toprak (Desolate Land) güneşini çağırdı! Su saldırıları tamamen buharlaştı!`);
+  } else if (entering.ability === 'delta_stream') {
+    newWeather = 'clear';
+    logs.push(`${spName} Delta Akımı (Delta Stream) ile Uçan türünün tüm zayıflıklarını sildi!`);
   } else if (entering.ability === 'drizzle' && currentWeather !== 'rain') {
     newWeather = 'rain';
     logs.push(`${spName} Sağanak Çağrısı (Drizzle) ile şiddetli yağmur başlattı!`);
@@ -116,10 +126,10 @@ export function executeMoveAction(params: {
   const move = params.move;
   const logs: string[] = [];
 
-  const atkName = attacker.nickname || POKEDEX[attacker.speciesId].name;
-  const defName = defender.nickname || POKEDEX[defender.speciesId].name;
-  const atkSp = POKEDEX[attacker.speciesId];
-  const defSp = POKEDEX[defender.speciesId];
+  const atkName = getActiveDisplayName(attacker);
+  const defName = getActiveDisplayName(defender);
+  const atkTypes = getActiveTypes(attacker);
+  const defTypes = getActiveTypes(defender);
   const airLock = attacker.ability === 'air_lock' || defender.ability === 'air_lock';
 
   // Status pre-checks (Sleep, Freeze, Paralysis)
@@ -265,9 +275,79 @@ export function executeMoveAction(params: {
     }
   }
 
-  // Absorb abilities (Water Absorb, Volt Absorb, Flash Fire, Levitate)
-  if (!move.effect?.targetSelf && move.category !== 'status') {
-    if (move.type === 'Water' && defender.ability === 'water_absorb') {
+  // Magic Bounce blocks offensive status moves!
+  if (move.category === 'status' && !move.effect?.targetSelf && !move.effect?.weather && defender.ability === 'magic_bounce') {
+    logs.push(`${defName} Sihirli Ayna (Magic Bounce) ile durum hamlesini savuşturdu!`);
+    return {
+      attacker,
+      defender,
+      attackerStages,
+      defenderStages,
+      weather,
+      damageDealt: 0,
+      effectiveness: 0,
+      isCrit: false,
+      missed: false,
+      flinchedDefender: false,
+      protectedUsed: false,
+      seededDefender: false,
+      logs,
+    };
+  }
+
+  // Aerilate / Pixilate type conversion!
+  let effectiveMoveType: PokemonType = move.type;
+  let ateBoost = 1;
+  if (move.type === 'Normal' && move.category !== 'status') {
+    if (attacker.ability === 'aerilate') {
+      effectiveMoveType = 'Flying';
+      ateBoost = 1.2;
+    } else if (attacker.ability === 'pixilate') {
+      effectiveMoveType = 'Fairy';
+      ateBoost = 1.2;
+    }
+  }
+
+  // Absorb abilities (Water Absorb, Volt Absorb, Flash Fire, Levitate, Primordial Sea, Desolate Land)
+  const ignoreDefAbility = attacker.ability === 'mold_breaker';
+  if (!ignoreDefAbility && !move.effect?.targetSelf && move.category !== 'status') {
+    if (effectiveMoveType === 'Water' && defender.ability === 'desolate_land') {
+      logs.push(`Kavurucu Toprak (Desolate Land) yakıcı güneşi Su saldırısını tamamen buharlaştırdı!`);
+      return {
+        attacker,
+        defender,
+        attackerStages,
+        defenderStages,
+        weather,
+        damageDealt: 0,
+        effectiveness: 0,
+        isCrit: false,
+        missed: false,
+        flinchedDefender: false,
+        protectedUsed: false,
+        seededDefender: false,
+        logs,
+      };
+    }
+    if (effectiveMoveType === 'Fire' && defender.ability === 'primordial_sea') {
+      logs.push(`İlkel Okyanus (Primordial Sea) fırtınası Ateş saldırısını tamamen söndürdü!`);
+      return {
+        attacker,
+        defender,
+        attackerStages,
+        defenderStages,
+        weather,
+        damageDealt: 0,
+        effectiveness: 0,
+        isCrit: false,
+        missed: false,
+        flinchedDefender: false,
+        protectedUsed: false,
+        seededDefender: false,
+        logs,
+      };
+    }
+    if (effectiveMoveType === 'Water' && defender.ability === 'water_absorb') {
       const heal = Math.max(1, Math.floor(defender.maxHp * 0.25));
       defender.currentHp = Math.min(defender.maxHp, defender.currentHp + heal);
       logs.push(`${defName} Su Emişi (Water Absorb) ile saldırıyı emip HP yeniledi!`);
@@ -287,7 +367,7 @@ export function executeMoveAction(params: {
         logs,
       };
     }
-    if (move.type === 'Electric' && defender.ability === 'volt_absorb') {
+    if (effectiveMoveType === 'Electric' && defender.ability === 'volt_absorb') {
       const heal = Math.max(1, Math.floor(defender.maxHp * 0.25));
       defender.currentHp = Math.min(defender.maxHp, defender.currentHp + heal);
       logs.push(`${defName} Volt Emişi (Volt Absorb) ile elektriği emip HP yeniledi!`);
@@ -307,7 +387,7 @@ export function executeMoveAction(params: {
         logs,
       };
     }
-    if (move.type === 'Ground' && defender.ability === 'levitate') {
+    if (effectiveMoveType === 'Ground' && defender.ability === 'levitate') {
       logs.push(`${defName} Havada Süzülme (Levitate) sayesinde Toprak saldırısından hiç etkilenmedi!`);
       return {
         attacker,
@@ -325,7 +405,7 @@ export function executeMoveAction(params: {
         logs,
       };
     }
-    if (move.type === 'Fire' && defender.ability === 'flash_fire') {
+    if (effectiveMoveType === 'Fire' && defender.ability === 'flash_fire') {
       logs.push(`${defName} Alev Emişi (Flash Fire) ile ateşi yuttu!`);
       return {
         attacker,
@@ -353,7 +433,12 @@ export function executeMoveAction(params: {
 
   // Damage calculation for Physical / Special moves
   if (move.category !== 'status' && move.power > 0) {
-    effectiveness = getTypeEffectiveness(move.type, defSp.types, defender.ability);
+    effectiveness = getTypeEffectiveness(
+      effectiveMoveType,
+      defTypes,
+      defender.ability,
+      attacker.ability
+    );
     if (effectiveness === 0) {
       logs.push(`${defName} üzerinde hiçbir etkisi olmadı!`);
       return {
@@ -386,7 +471,7 @@ export function executeMoveAction(params: {
     let defStat = (isPhys ? defender.stats.def : defender.stats.spd) * stageMultiplier(defStage);
 
     // Rock SpDef 1.5x in Sandstorm!
-    if (!isPhys && !airLock && weather === 'sandstorm' && defSp.types.includes('Rock')) {
+    if (!isPhys && !airLock && weather === 'sandstorm' && defTypes.includes('Rock')) {
       defStat *= 1.5;
     }
 
@@ -402,15 +487,21 @@ export function executeMoveAction(params: {
       }
     }
 
-    // Pinch abilities (Blaze, Torrent, Overgrow, Swarm)
-    let power = move.power;
+    // Pinch & Mega abilities
+    let power = Math.floor(move.power * ateBoost);
+    if (attacker.ability === 'tough_claws' && (move.contact || isPhys)) {
+      power = Math.floor(power * 1.3);
+    } else if (attacker.ability === 'mega_launcher' && !isPhys) {
+      power = Math.floor(power * 1.3);
+    }
+
     const lowHp = attacker.currentHp <= Math.floor(attacker.maxHp / 3);
     if (lowHp) {
       if (
-        (attacker.ability === 'blaze' && move.type === 'Fire') ||
-        (attacker.ability === 'torrent' && move.type === 'Water') ||
-        (attacker.ability === 'overgrow' && move.type === 'Grass') ||
-        (attacker.ability === 'swarm' && move.type === 'Bug')
+        (attacker.ability === 'blaze' && effectiveMoveType === 'Fire') ||
+        (attacker.ability === 'torrent' && effectiveMoveType === 'Water') ||
+        (attacker.ability === 'overgrow' && effectiveMoveType === 'Grass') ||
+        (attacker.ability === 'swarm' && effectiveMoveType === 'Bug')
       ) {
         power = Math.floor(power * 1.5);
       }
@@ -418,11 +509,11 @@ export function executeMoveAction(params: {
 
     // Type-boosting held items
     if (
-      (attacker.heldItem === 'charcoal' && move.type === 'Fire') ||
-      (attacker.heldItem === 'mystic-water' && move.type === 'Water') ||
-      (attacker.heldItem === 'miracle-seed' && move.type === 'Grass') ||
-      (attacker.heldItem === 'magnet' && move.type === 'Electric') ||
-      (attacker.heldItem === 'metal-coat' && move.type === 'Steel')
+      (attacker.heldItem === 'charcoal' && effectiveMoveType === 'Fire') ||
+      (attacker.heldItem === 'mystic-water' && effectiveMoveType === 'Water') ||
+      (attacker.heldItem === 'miracle-seed' && effectiveMoveType === 'Grass') ||
+      (attacker.heldItem === 'magnet' && effectiveMoveType === 'Electric') ||
+      (attacker.heldItem === 'metal-coat' && effectiveMoveType === 'Steel')
     ) {
       power = Math.floor(power * 1.2);
     }
@@ -440,22 +531,33 @@ export function executeMoveAction(params: {
       // Weather modifier
       if (!airLock) {
         if (weather === 'sun') {
-          if (move.type === 'Fire') baseDmg = Math.floor(baseDmg * 1.5);
-          if (move.type === 'Water') baseDmg = Math.floor(baseDmg * 0.5);
+          if (effectiveMoveType === 'Fire') baseDmg = Math.floor(baseDmg * 1.5);
+          if (effectiveMoveType === 'Water') baseDmg = Math.floor(baseDmg * 0.5);
         } else if (weather === 'rain') {
-          if (move.type === 'Water') baseDmg = Math.floor(baseDmg * 1.5);
-          if (move.type === 'Fire') baseDmg = Math.floor(baseDmg * 0.5);
+          if (effectiveMoveType === 'Water') baseDmg = Math.floor(baseDmg * 1.5);
+          if (effectiveMoveType === 'Fire') baseDmg = Math.floor(baseDmg * 0.5);
         }
       }
 
       if (isCrit) baseDmg = Math.floor(baseDmg * 1.5);
-      if (atkSp.types.includes(move.type)) baseDmg = Math.floor(baseDmg * 1.5); // STAB!
+      if (atkTypes.includes(effectiveMoveType)) {
+        const stabMult = attacker.ability === 'adaptability' ? 2.0 : 1.5;
+        baseDmg = Math.floor(baseDmg * stabMult);
+      }
+      if (attacker.ability === 'parental_bond') {
+        baseDmg = Math.floor(baseDmg * 1.25);
+      }
+      if (attacker.heldItem === 'life-orb') {
+        baseDmg = Math.floor(baseDmg * 1.3);
+      }
+
       baseDmg = Math.floor(baseDmg * effectiveness);
       const randFactor = 0.85 + Math.random() * 0.15;
       let finalHit = Math.max(1, Math.floor(baseDmg * randFactor));
 
-      // Sturdy check (survive OHKO from full HP!)
+      // Sturdy check (survive OHKO from full HP unless Mold Breaker!)
       if (
+        !ignoreDefAbility &&
         defender.ability === 'sturdy' &&
         defender.currentHp === defender.maxHp &&
         finalHit >= defender.currentHp
@@ -469,10 +571,20 @@ export function executeMoveAction(params: {
       damageDealt += actual;
     }
 
+    if (attacker.ability === 'parental_bond' && damageDealt > 0) {
+      logs.push(`Ebeveyn Bağı ile anne ve yavrusu çifte darbe indirdi!`);
+    }
     if (hits > 1) logs.push(`Toplam ${hits} kez isabet etti!`);
     if (isCrit) logs.push('Kritik vuruş!');
     if (effectiveness >= 2) logs.push('Süper etkili oldu!');
     else if (effectiveness < 1) logs.push('Pek etkili olmadı...');
+
+    // Life Orb recoil
+    if (attacker.heldItem === 'life-orb' && damageDealt > 0 && attacker.currentHp > 0) {
+      const orbCost = Math.max(1, Math.floor(attacker.maxHp * 0.1));
+      attacker.currentHp = Math.max(0, attacker.currentHp - orbCost);
+      logs.push(`${atkName} Yaşam Küresi nedeniyle biraz enerjisini tüketti!`);
+    }
 
     // Drain / Recoil
     if (move.effect?.drainPercent && damageDealt > 0) {
@@ -488,16 +600,16 @@ export function executeMoveAction(params: {
 
     // Contact Abilities (Static, Flame Body, Poison Point)
     if (move.contact && defender.currentHp > 0 && attacker.currentHp > 0 && attacker.status === 'none') {
-      if (defender.ability === 'static' && !atkSp.types.includes('Electric') && Math.random() < 0.3) {
+      if (defender.ability === 'static' && !atkTypes.includes('Electric') && Math.random() < 0.3) {
         attacker.status = 'par';
         logs.push(`${defName} Statik Elektrik yeteneğiyle ${atkName} felç oldu!`);
-      } else if (defender.ability === 'flame_body' && !atkSp.types.includes('Fire') && Math.random() < 0.3) {
+      } else if (defender.ability === 'flame_body' && !atkTypes.includes('Fire') && Math.random() < 0.3) {
         attacker.status = 'brn';
         logs.push(`${defName} Alev Beden yeteneğiyle ${atkName} yandı!`);
       } else if (
         defender.ability === 'poison_point' &&
-        !atkSp.types.includes('Poison') &&
-        !atkSp.types.includes('Steel') &&
+        !atkTypes.includes('Poison') &&
+        !atkTypes.includes('Steel') &&
         Math.random() < 0.3
       ) {
         attacker.status = 'psn';
@@ -530,7 +642,7 @@ export function executeMoveAction(params: {
     }
 
     if (move.effect.leechSeed && defender.currentHp > 0) {
-      if (defSp.types.includes('Grass')) {
+      if (defTypes.includes('Grass')) {
         logs.push(`${defName} Çimen tipi olduğu için Sülük Tohumundan etkilenmedi!`);
       } else {
         seededDefender = true;
@@ -591,10 +703,10 @@ export function executeMoveAction(params: {
         } else {
           const st = move.effect.status;
           const immune =
-            (st === 'brn' && defSp.types.includes('Fire')) ||
-            ((st === 'psn' || st === 'tox') && (defSp.types.includes('Poison') || defSp.types.includes('Steel'))) ||
-            (st === 'par' && defSp.types.includes('Electric')) ||
-            (st === 'frz' && defSp.types.includes('Ice'));
+            (st === 'brn' && defTypes.includes('Fire')) ||
+            ((st === 'psn' || st === 'tox') && (defTypes.includes('Poison') || defTypes.includes('Steel'))) ||
+            (st === 'par' && defTypes.includes('Electric')) ||
+            (st === 'frz' && defTypes.includes('Ice'));
           if (immune) {
             if (move.category === 'status') logs.push(`${defName} bu durum etkisine karşı bağışıklı!`);
           } else {
@@ -688,16 +800,16 @@ export function applyEndOfTurnEffects(params: {
   const logs: string[] = [];
   if (mon.currentHp <= 0) return { mon, stages, opponent, logs };
 
-  const name = mon.nickname || POKEDEX[mon.speciesId].name;
-  const sp = POKEDEX[mon.speciesId];
+  const name = getActiveDisplayName(mon);
+  const activeTypes = getActiveTypes(mon);
 
   // Weather chip
   if (!params.airLock) {
     if (
       params.weather === 'sandstorm' &&
-      !sp.types.includes('Rock') &&
-      !sp.types.includes('Ground') &&
-      !sp.types.includes('Steel')
+      !activeTypes.includes('Rock') &&
+      !activeTypes.includes('Ground') &&
+      !activeTypes.includes('Steel')
     ) {
       const dmg = Math.max(1, Math.floor(mon.maxHp / 16));
       mon.currentHp = Math.max(0, mon.currentHp - dmg);
@@ -761,8 +873,8 @@ export function chooseEnemyMove(
     return MOVES[pick.moveId] || MOVES.tackle;
   }
 
-  const aiSp = POKEDEX[aiMon.speciesId];
-  const plSp = POKEDEX[playerMon.speciesId];
+  const aiTypes = getActiveTypes(aiMon);
+  const plTypes = getActiveTypes(playerMon);
 
   let bestMove = MOVES[usable[0].moveId] || MOVES.tackle;
   let bestScore = -999;
@@ -783,11 +895,11 @@ export function chooseEnemyMove(
         score = 35;
       }
     } else {
-      const eff = getTypeEffectiveness(md.type, plSp.types, playerMon.ability);
+      const eff = getTypeEffectiveness(md.type, plTypes, playerMon.ability, aiMon.ability);
       if (eff === 0) {
         score = -500;
       } else {
-        const stab = aiSp.types.includes(md.type) ? 1.5 : 1;
+        const stab = aiTypes.includes(md.type) ? 1.5 : 1;
         score = md.power * eff * stab;
         if (md.priority && md.priority > 0 && playerMon.currentHp < playerMon.maxHp * 0.25) {
           score += 90; // Finish off low HP target with Quick Attack / Extreme Speed!

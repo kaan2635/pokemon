@@ -1,29 +1,28 @@
 import { MOVES } from '../data/moves';
 import { POKEDEX, POKEDEX_LIST } from '../data/pokedex';
 import { getNatureMultiplier, NATURE_LIST } from '../data/typesAndNatures';
-import { MoveSlot, PokemonInstance, StatKey } from '../types/game';
+import { MegaFormData, MoveSlot, PokemonInstance, StatKey } from '../types/game';
 
 export function expForLevel(level: number): number {
   if (level <= 1) return 0;
   return Math.floor(Math.pow(level, 3));
 }
 
-export function computeStats(
-  speciesId: number,
+export function computeStatsFromBase(
+  baseStats: Record<StatKey, number>,
   level: number,
   ivs: Record<StatKey, number>,
   evs: Record<StatKey, number>,
   natureId: string
 ): Record<StatKey, number> {
-  const sp = POKEDEX[speciesId];
   const hp =
-    Math.floor(((2 * sp.baseStats.hp + ivs.hp + Math.floor(evs.hp / 4)) * level) / 100) +
+    Math.floor(((2 * baseStats.hp + ivs.hp + Math.floor(evs.hp / 4)) * level) / 100) +
     level +
     10;
 
   const calcOther = (key: Exclude<StatKey, 'hp'>) => {
     const raw =
-      Math.floor(((2 * sp.baseStats[key] + ivs[key] + Math.floor(evs[key] / 4)) * level) / 100) + 5;
+      Math.floor(((2 * baseStats[key] + ivs[key] + Math.floor(evs[key] / 4)) * level) / 100) + 5;
     return Math.max(5, Math.floor(raw * getNatureMultiplier(natureId, key)));
   };
 
@@ -35,6 +34,17 @@ export function computeStats(
     spd: calcOther('spd'),
     spe: calcOther('spe'),
   };
+}
+
+export function computeStats(
+  speciesId: number,
+  level: number,
+  ivs: Record<StatKey, number>,
+  evs: Record<StatKey, number>,
+  natureId: string
+): Record<StatKey, number> {
+  const sp = POKEDEX[speciesId];
+  return computeStatsFromBase(sp.baseStats, level, ivs, evs, natureId);
 }
 
 export interface CreatePokemonOptions {
@@ -137,15 +147,70 @@ export function recalculatePokemonStats(mon: PokemonInstance): PokemonInstance {
 }
 
 export function healPokemonFull(mon: PokemonInstance): PokemonInstance {
-  const stats = computeStats(mon.speciesId, mon.level, mon.ivs, mon.evs, mon.nature);
+  const clean = revertMegaTransformation(mon);
+  const stats = computeStats(clean.speciesId, clean.level, clean.ivs, clean.evs, clean.nature);
   return {
-    ...mon,
+    ...clean,
     stats,
     maxHp: stats.hp,
     currentHp: stats.hp,
     status: 'none',
     sleepTurns: 0,
-    moves: mon.moves.map((m) => ({ ...m, pp: m.maxPp })),
+    moves: clean.moves.map((m) => ({ ...m, pp: m.maxPp })),
+  };
+}
+
+export function applyMegaTransformation(
+  mon: PokemonInstance,
+  mega: MegaFormData
+): PokemonInstance {
+  const megaStats = computeStatsFromBase(mega.baseStats, mon.level, mon.ivs, mon.evs, mon.nature);
+  const hpRatio = mon.maxHp > 0 ? mon.currentHp / mon.maxHp : 1;
+  const newCurrentHp = mon.currentHp > 0 ? Math.max(1, Math.round(megaStats.hp * hpRatio)) : 0;
+
+  return {
+    ...mon,
+    megaFormId: mega.id,
+    baseAbility: mon.baseAbility || mon.ability,
+    ability: mega.ability,
+    stats: megaStats,
+    maxHp: megaStats.hp,
+    currentHp: newCurrentHp,
+  };
+}
+
+export function revertMegaTransformation(mon: PokemonInstance): PokemonInstance {
+  if (!mon.megaFormId && !mon.isRaidBoss) return mon;
+  const restoredAbility = mon.baseAbility || mon.ability;
+  const baseStats = computeStats(mon.speciesId, mon.level, mon.ivs, mon.evs, mon.nature);
+  const hpRatio = mon.maxHp > 0 ? mon.currentHp / mon.maxHp : 0;
+  const restoredHp = mon.currentHp > 0 ? Math.max(1, Math.min(baseStats.hp, Math.round(baseStats.hp * hpRatio))) : 0;
+
+  const copy: PokemonInstance = {
+    ...mon,
+    ability: restoredAbility,
+    stats: baseStats,
+    maxHp: baseStats.hp,
+    currentHp: restoredHp,
+  };
+  delete copy.megaFormId;
+  delete copy.baseAbility;
+  delete copy.isRaidBoss;
+  return copy;
+}
+
+export function createRaidBossPokemon(speciesId: number, level: number): PokemonInstance {
+  const base = createPokemon(speciesId, level, {
+    perfectIvs: true,
+    dexNavBoost: true,
+    metLocation: 'Maksimum Akın İni',
+  });
+  const raidHp = Math.round(base.maxHp * 2.2);
+  return {
+    ...base,
+    maxHp: raidHp,
+    currentHp: raidHp,
+    isRaidBoss: true,
   };
 }
 

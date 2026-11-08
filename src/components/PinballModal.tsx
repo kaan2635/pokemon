@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { POKEDEX } from '../data/pokedex';
 import { audio } from '../engine/audio';
+import { assetUrl } from '../utils/assetPath';
 import { Gamepad2, Gift, X } from 'lucide-react';
 
 interface PinballModalProps {
@@ -347,7 +348,7 @@ export const PinballModal: React.FC<PinballModalProps> = ({
                 >
                   <div className="flex items-center gap-2.5">
                     <img
-                      src={`/sprites/front/${pr.speciesId}.png`}
+                      src={assetUrl(`sprites/front/${pr.speciesId}.png`)}
                       alt={sp.name}
                       style={{ imageRendering: 'pixelated' }}
                       className="w-12 h-12 bg-slate-900 rounded-lg p-1"

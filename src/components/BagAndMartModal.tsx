@@ -2,16 +2,18 @@ import React, { useState } from 'react';
 import {
   BP_SHOP_ITEMS,
   ITEMS,
+  MEGA_STONE_MART_ITEMS,
   STANDARD_MART_ITEMS,
   STONE_AND_HELD_MART_ITEMS,
   TM_MART_ITEMS,
 } from '../data/items';
 import { POKEDEX } from '../data/pokedex';
 import { ItemCategory, PokemonInstance } from '../types/game';
+import { assetUrl } from '../utils/assetPath';
 import { Backpack, ShoppingBag, X } from 'lucide-react';
 
 interface BagAndMartModalProps {
-  mode: 'bag' | 'mart' | 'stone_mart' | 'tm_mart' | 'bp_mart';
+  mode: 'bag' | 'mart' | 'stone_mart' | 'tm_mart' | 'bp_mart' | 'mega_mart';
   bag: Record<string, number>;
   money: number;
   battlePoints: number;
@@ -25,7 +27,7 @@ const CATEGORY_TABS: Array<{ id: ItemCategory; label: string }> = [
   { id: 'medicine', label: 'İlaçlar' },
   { id: 'balls', label: 'Toplar' },
   { id: 'evo_tm', label: 'Evrim & TM' },
-  { id: 'held_berry', label: 'Tutulan & Meyve' },
+  { id: 'held_berry', label: 'Mega Taş, Tutulan & Meyve' },
   { id: 'key', label: 'Anahtar Eşyalar' },
 ];
 
@@ -47,7 +49,9 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
   const useBp = mode === 'bp_mart';
 
   const shopCatalog =
-    mode === 'stone_mart'
+    mode === 'mega_mart'
+      ? MEGA_STONE_MART_ITEMS
+      : mode === 'stone_mart'
       ? STONE_AND_HELD_MART_ITEMS
       : mode === 'tm_mart'
       ? TM_MART_ITEMS
@@ -56,7 +60,9 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
       : STANDARD_MART_ITEMS;
 
   const shopTitle =
-    mode === 'stone_mart'
+    mode === 'mega_mart'
+      ? 'Kalos & Hoenn Mega Taş ve İlkel Küre Butiği'
+      : mode === 'stone_mart'
       ? 'Celadon AVM — Evrim Taşları & Tutulan Eşyalar'
       : mode === 'tm_mart'
       ? 'Celadon AVM — Sınırsız TM Teknik Reyonu'
@@ -113,7 +119,7 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <img
-                      src={`/sprites/items/${it.sprite}`}
+                      src={assetUrl(`sprites/items/${it.sprite}`)}
                       alt=""
                       style={{ imageRendering: 'pixelated' }}
                       className="w-8 h-8 shrink-0"
@@ -121,14 +127,16 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
                     <div className="min-w-0">
                       <div className="font-bold text-xs sm:text-sm text-white truncate">
                         {it.nameTr}{' '}
-                        {owned > 0 && <span className="text-slate-400 font-normal">(Çantada: {owned})</span>}
+                        {owned > 0 && (
+                          <span className="text-slate-400 font-normal">(Çantada: {owned})</span>
+                        )}
                       </div>
                       <div className="text-[11px] text-slate-400 line-clamp-2">{it.descTr}</div>
                     </div>
                   </div>
                   <div className="flex flex-col gap-1 shrink-0 items-end">
                     <span className="text-xs font-black text-amber-300">
-                      {useBp ? `${cost} BP` : `₽${cost}`}
+                      {useBp ? `${cost} BP` : `₽${cost.toLocaleString('tr-TR')}`}
                     </span>
                     <div className="flex gap-1">
                       <button
@@ -137,7 +145,7 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
                       >
                         Al x1
                       </button>
-                      {!it.tmMoveId && !useBp && (
+                      {!it.tmMoveId && !it.megaStoneFor && !useBp && (
                         <button
                           onClick={() => setNotice(onBuyItem(itemId, 5, false))}
                           className="px-2 py-1 rounded-lg bg-sky-700 hover:bg-sky-600 text-white font-bold text-xs"
@@ -185,7 +193,7 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <img
-                          src={`/sprites/items/${it.sprite}`}
+                          src={assetUrl(`sprites/items/${it.sprite}`)}
                           alt=""
                           style={{ imageRendering: 'pixelated' }}
                           className="w-8 h-8 shrink-0"
@@ -214,6 +222,13 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
                         >
                           Kullan
                         </button>
+                      ) : it.category === 'held_berry' ? (
+                        <button
+                          onClick={() => setPickingPartyForItem(id)}
+                          className="px-3 py-1.5 rounded-lg bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-bold text-xs shrink-0"
+                        >
+                          Tuttur
+                        </button>
                       ) : null}
                     </div>
                   );
@@ -230,7 +245,7 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
               {pickingPartyForItem && (
                 <div className="p-3 rounded-xl bg-slate-800 border border-amber-400/60 space-y-2 mt-2">
                   <div className="text-xs font-bold text-amber-300">
-                    {ITEMS[pickingPartyForItem]?.nameTr} hangi Pokémon üzerinde kullanılsın?
+                    {ITEMS[pickingPartyForItem]?.nameTr} hangi Pokémon üzerinde kullanılsın / tutturulsun?
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {party.map((m, idx) => (
@@ -242,7 +257,11 @@ export const BagAndMartModal: React.FC<BagAndMartModalProps> = ({
                         }}
                         className="p-2 rounded-lg bg-slate-900 hover:bg-slate-950 border border-slate-700 flex items-center gap-2 text-left"
                       >
-                        <img src={`/sprites/icons/${m.speciesId}.png`} alt="" className="w-7 h-7" />
+                        <img
+                          src={assetUrl(`sprites/icons/${m.speciesId}.png`)}
+                          alt=""
+                          className="w-7 h-7"
+                        />
                         <div className="text-xs">
                           <div className="font-bold text-white">{POKEDEX[m.speciesId].name}</div>
                           <div className="text-[10px] text-slate-400">

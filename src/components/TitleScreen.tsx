@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { DifficultyMode, SaveState } from '../types/game';
+import { assetUrl } from '../utils/assetPath';
 import { Sparkles, Play, RotateCcw, Upload, Shield, Flame, Trophy } from 'lucide-react';
 
 interface TitleScreenProps {
@@ -63,16 +64,16 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           </p>
         </div>
 
-        {/* Hero GBA Sprite Showcase */}
-        <div className="flex items-end justify-center gap-3 sm:gap-6 my-2 px-5 py-3 rounded-2xl bg-slate-900/60 border border-slate-700/70 backdrop-blur-sm shadow-2xl">
-          {[3, 6, 9, 384, 257, 260, 150].map((id, idx) => (
+        {/* Hero GBA + Mega Sprite Showcase */}
+        <div className="flex items-end justify-center gap-3 sm:gap-5 my-2 px-5 py-3 rounded-2xl bg-slate-900/60 border border-slate-700/70 backdrop-blur-sm shadow-2xl">
+          {[3, 10034, 9, 10079, 10050, 282, 10043].map((id, idx) => (
             <div key={id} className="flex flex-col items-center">
               <img
-                src={`/sprites/front/${id}.png`}
+                src={assetUrl(`sprites/front/${id}.png`)}
                 alt={`Pokemon ${id}`}
                 style={{ imageRendering: 'pixelated' }}
                 className={`w-14 h-14 sm:w-20 sm:h-20 object-contain transition-transform hover:scale-110 ${
-                  idx === 3 ? 'scale-125 drop-shadow-[0_0_12px_rgba(52,211,153,0.6)]' : idx === 1 ? 'scale-115 drop-shadow-[0_0_12px_rgba(248,113,113,0.6)]' : ''
+                  idx === 3 ? 'scale-125 drop-shadow-[0_0_12px_rgba(52,211,153,0.6)]' : idx === 1 ? 'scale-115 drop-shadow-[0_0_12px_rgba(217,70,239,0.7)]' : ''
                 }`}
               />
             </div>
@@ -81,9 +82,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
         {/* Feature Pills */}
         <div className="flex flex-wrap justify-center gap-2 my-3 text-[11px] text-slate-300">
-          <span className="px-2.5 py-1 rounded-md bg-red-950/80 border border-red-700/50">165 Kanto•Johto•Hoenn Pokémonu</span>
+          <span className="px-2.5 py-1 rounded-md bg-fuchsia-950/90 border border-fuchsia-500/60 text-fuchsia-200 font-bold">✨ 31 Mega Evrim &amp; İlkel Dönüşüm + Peri Tipi</span>
+          <span className="px-2.5 py-1 rounded-md bg-rose-950/80 border border-rose-700/50">⚡ Dinamaks Akın İnleri &amp; Harika Takas</span>
           <span className="px-2.5 py-1 rounded-md bg-emerald-950/80 border border-emerald-700/50">8 Salon + Elit Dörtlü + Savaş Sınırı</span>
-          <span className="px-2.5 py-1 rounded-md bg-amber-950/80 border border-amber-700/50">Yetenekler, Doğalar, Hava Durumu &amp; Meyveler</span>
           <span className="px-2.5 py-1 rounded-md bg-sky-950/80 border border-sky-700/50">PokéNav, DexNav, Safari, Pinball &amp; Kurtarma Loncası</span>
         </div>
 
@@ -105,7 +106,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                 <div className="flex items-center gap-2 mt-2">
                   {existingSave.party.map((m) => (
                     <div key={m.uid} className="flex items-center gap-1 bg-slate-900/80 px-2 py-1 rounded-lg border border-slate-700">
-                      <img src={`/sprites/icons/${m.speciesId}.png`} alt="" style={{ imageRendering: 'pixelated' }} className="w-7 h-7" />
+                      <img src={assetUrl(`sprites/icons/${m.speciesId}.png`)} alt="" style={{ imageRendering: 'pixelated' }} className="w-7 h-7" />
                       <span className="text-xs font-bold text-slate-200">Lv.{m.level}</span>
                     </div>
                   ))}

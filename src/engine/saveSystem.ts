@@ -26,6 +26,8 @@ export function createNewSaveState(
       potion: 5,
       'poke-ball': 5,
       'oran-berry': 2,
+      'mega-ring': 1,
+      'ability-capsule': 1,
     },
     money: 3000,
     battlePoints: 0,
@@ -69,6 +71,8 @@ export function loadSaveFromStorage(): SaveState | null {
     if (!parsed || typeof parsed !== 'object' || !parsed.mapId || !Array.isArray(parsed.party)) {
       return null;
     }
+    if (!parsed.bag) parsed.bag = {};
+    if (!parsed.bag['mega-ring']) parsed.bag['mega-ring'] = 1;
     return parsed;
   } catch {
     return null;

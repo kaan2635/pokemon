@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { POKEDEX } from '../data/pokedex';
 import { ABILITIES, TYPE_COLORS, TYPE_NAMES_TR } from '../data/typesAndNatures';
+import { assetUrl } from '../utils/assetPath';
 import { Sparkles, Check } from 'lucide-react';
 
 interface StarterLabModalProps {
@@ -101,7 +102,7 @@ export const StarterLabModal: React.FC<StarterLabModalProps> = ({ onSelectStarte
                 }`}
               >
                 <img
-                  src={`/sprites/front/${id}.png`}
+                  src={assetUrl(`sprites/front/${id}.png`)}
                   alt={sp.name}
                   style={{ imageRendering: 'pixelated' }}
                   className="w-20 h-20 object-contain"
@@ -148,14 +149,14 @@ export const StarterLabModal: React.FC<StarterLabModalProps> = ({ onSelectStarte
             {/* Evolution Chain Preview */}
             <div className="flex items-center gap-2 bg-slate-900 px-3 py-2 rounded-xl border border-slate-800 shrink-0 self-start">
               <div className="text-center">
-                <img src={`/sprites/icons/${selectedSp.id}.png`} alt="" style={{ imageRendering: 'pixelated' }} className="w-8 h-8 mx-auto" />
+                <img src={assetUrl(`sprites/icons/${selectedSp.id}.png`)} alt="" style={{ imageRendering: 'pixelated' }} className="w-8 h-8 mx-auto" />
                 <span className="text-[10px] text-slate-300 font-bold">Lv.5</span>
               </div>
               {evo1 && (
                 <>
                   <span className="text-slate-500 text-xs">→</span>
                   <div className="text-center">
-                    <img src={`/sprites/icons/${evo1.id}.png`} alt="" style={{ imageRendering: 'pixelated' }} className="w-8 h-8 mx-auto" />
+                    <img src={assetUrl(`sprites/icons/${evo1.id}.png`)} alt="" style={{ imageRendering: 'pixelated' }} className="w-8 h-8 mx-auto" />
                     <span className="text-[10px] text-slate-300 font-bold">Lv.{selectedSp.evolutions?.[0]?.level}</span>
                   </div>
                 </>
@@ -164,7 +165,7 @@ export const StarterLabModal: React.FC<StarterLabModalProps> = ({ onSelectStarte
                 <>
                   <span className="text-slate-500 text-xs">→</span>
                   <div className="text-center">
-                    <img src={`/sprites/icons/${evo2.id}.png`} alt="" style={{ imageRendering: 'pixelated' }} className="w-8 h-8 mx-auto" />
+                    <img src={assetUrl(`sprites/icons/${evo2.id}.png`)} alt="" style={{ imageRendering: 'pixelated' }} className="w-8 h-8 mx-auto" />
                     <span className="text-[10px] text-amber-300 font-bold">Lv.{evo1?.evolutions?.[0]?.level}</span>
                   </div>
                 </>

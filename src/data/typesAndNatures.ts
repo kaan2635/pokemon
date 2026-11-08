@@ -18,6 +18,7 @@ export const TYPE_NAMES_TR: Record<PokemonType, string> = {
   Dragon: 'Ejder',
   Dark: 'Karanlık',
   Steel: 'Çelik',
+  Fairy: 'Peri',
 };
 
 export const TYPE_COLORS: Record<PokemonType, { bg: string; border: string; text: string }> = {
@@ -38,6 +39,7 @@ export const TYPE_COLORS: Record<PokemonType, { bg: string; border: string; text
   Dragon: { bg: '#6F35FC', border: '#4924A1', text: '#fff' },
   Dark: { bg: '#705746', border: '#49392F', text: '#fff' },
   Steel: { bg: '#B7B7CE', border: '#787887', text: '#0f172a' },
+  Fairy: { bg: '#D685AD', border: '#9B6470', text: '#fff' },
 };
 
 export const TYPE_CHART: Record<PokemonType, Partial<Record<PokemonType, number>>> = {
@@ -69,8 +71,9 @@ export const TYPE_CHART: Record<PokemonType, Partial<Record<PokemonType, number>
     Ghost: 0,
     Dark: 2,
     Steel: 2,
+    Fairy: 0.5,
   },
-  Poison: { Grass: 2, Poison: 0.5, Ground: 0.5, Rock: 0.5, Ghost: 0.5, Steel: 0 },
+  Poison: { Grass: 2, Poison: 0.5, Ground: 0.5, Rock: 0.5, Ghost: 0.5, Steel: 0, Fairy: 2 },
   Ground: { Fire: 2, Grass: 0.5, Electric: 2, Poison: 2, Flying: 0, Bug: 0.5, Rock: 2, Steel: 2 },
   Flying: { Grass: 2, Electric: 0.5, Fighting: 2, Bug: 2, Rock: 0.5, Steel: 0.5 },
   Psychic: { Fighting: 2, Poison: 2, Psychic: 0.5, Dark: 0, Steel: 0.5 },
@@ -84,31 +87,44 @@ export const TYPE_CHART: Record<PokemonType, Partial<Record<PokemonType, number>
     Ghost: 0.5,
     Dark: 2,
     Steel: 0.5,
+    Fairy: 0.5,
   },
   Rock: { Fire: 2, Ice: 2, Fighting: 0.5, Ground: 0.5, Flying: 2, Bug: 2, Steel: 0.5 },
   Ghost: { Normal: 0, Psychic: 2, Ghost: 2, Dark: 0.5 },
-  Dragon: { Dragon: 2, Steel: 0.5 },
-  Dark: { Fighting: 0.5, Psychic: 2, Ghost: 2, Dark: 0.5 },
-  Steel: { Fire: 0.5, Water: 0.5, Electric: 0.5, Ice: 2, Rock: 2, Steel: 0.5 },
+  Dragon: { Dragon: 2, Steel: 0.5, Fairy: 0 },
+  Dark: { Fighting: 0.5, Psychic: 2, Ghost: 2, Dark: 0.5, Fairy: 0.5 },
+  Steel: { Fire: 0.5, Water: 0.5, Electric: 0.5, Ice: 2, Rock: 2, Steel: 0.5, Fairy: 2 },
+  Fairy: { Fire: 0.5, Fighting: 2, Poison: 0.5, Dragon: 2, Dark: 2, Steel: 0.5 },
 };
 
 export function getTypeEffectiveness(
   moveType: PokemonType,
   defenderTypes: PokemonType[],
-  defenderAbility?: string
+  defenderAbility?: string,
+  attackerAbility?: string
 ): number {
-  if (moveType === 'Ground' && defenderAbility === 'levitate') return 0;
-  if (moveType === 'Fire' && defenderAbility === 'flash_fire') return 0;
-  if (moveType === 'Water' && defenderAbility === 'water_absorb') return 0;
-  if (moveType === 'Electric' && defenderAbility === 'volt_absorb') return 0;
+  const ignoreAbility = attackerAbility === 'mold_breaker';
+  if (!ignoreAbility) {
+    if (moveType === 'Ground' && defenderAbility === 'levitate') return 0;
+    if (moveType === 'Fire' && (defenderAbility === 'flash_fire' || defenderAbility === 'primordial_sea')) return 0;
+    if (moveType === 'Water' && (defenderAbility === 'water_absorb' || defenderAbility === 'desolate_land')) return 0;
+    if (moveType === 'Electric' && defenderAbility === 'volt_absorb') return 0;
+  }
 
   let mult = 1;
   for (const dt of defenderTypes) {
-    const mod = TYPE_CHART[moveType]?.[dt];
+    let mod = TYPE_CHART[moveType]?.[dt];
+    // Delta Stream removes Flying weaknesses!
+    if (dt === 'Flying' && defenderAbility === 'delta_stream' && mod !== undefined && mod > 1) {
+      mod = 1;
+    }
     if (mod !== undefined) mult *= mod;
   }
-  if ((moveType === 'Fire' || moveType === 'Ice') && defenderAbility === 'thick_fat') {
+  if (!ignoreAbility && (moveType === 'Fire' || moveType === 'Ice') && defenderAbility === 'thick_fat') {
     mult *= 0.5;
+  }
+  if (!ignoreAbility && mult > 1 && defenderAbility === 'filter') {
+    mult *= 0.75;
   }
   return mult;
 }
@@ -291,6 +307,66 @@ export const ABILITIES: Record<string, AbilityData> = {
     id: 'pressure',
     nameTr: 'Efsanevi Baskı',
     descTr: 'Rakibin kullandığı saldırıların PP tüketimini iki katına çıkarır.',
+  },
+  tough_claws: {
+    id: 'tough_claws',
+    nameTr: 'Sert Pençe',
+    descTr: 'Fiziksel temas saldırılarının gücünü %30 artırır (Mega Evrim imzası).',
+  },
+  mega_launcher: {
+    id: 'mega_launcher',
+    nameTr: 'Mega Topçu',
+    descTr: 'Özel ve nabız/top saldırılarının gücünü %30 artırır (Mega Blastoise imzası).',
+  },
+  parental_bond: {
+    id: 'parental_bond',
+    nameTr: 'Ebeveyn Bağı',
+    descTr: 'Anne ve yavrusu art arda saldırarak toplam %25 ekstra hasar vurur.',
+  },
+  aerilate: {
+    id: 'aerilate',
+    nameTr: 'Gökyüzü Gücü',
+    descTr: 'Normal tipi saldırıları Uçan tipine çevirir ve güçlerini %20 artırır.',
+  },
+  pixilate: {
+    id: 'pixilate',
+    nameTr: 'Peri Gücü',
+    descTr: 'Normal tipi saldırıları Peri tipine çevirir ve güçlerini %20 artırır.',
+  },
+  adaptability: {
+    id: 'adaptability',
+    nameTr: 'Tam Uyum',
+    descTr: 'Aynı tür saldırı bonusunu (STAB) 1.5x yerine 2.0x seviyesine çıkarır!',
+  },
+  mold_breaker: {
+    id: 'mold_breaker',
+    nameTr: 'Kalıp Kıran',
+    descTr: 'Rakibin savunma yeteneklerini (Havada Süzülme, Sağlamlık vb.) yok sayar.',
+  },
+  magic_bounce: {
+    id: 'magic_bounce',
+    nameTr: 'Sihirli Ayna',
+    descTr: 'Rakibin durum bozucu hamlelerinden etkilenmez.',
+  },
+  filter: {
+    id: 'filter',
+    nameTr: 'Ağır Zırh Filtresi',
+    descTr: 'Süper etkili saldırılardan alınan hasarı %25 azaltır.',
+  },
+  primordial_sea: {
+    id: 'primordial_sea',
+    nameTr: 'İlkel Okyanus',
+    descTr: 'Fırtınalı okyanus çağırır: Su hamleleri güçlenir, Ateş saldırıları tamamen buharlaşır!',
+  },
+  desolate_land: {
+    id: 'desolate_land',
+    nameTr: 'Kavurucu Toprak',
+    descTr: 'Yakıcı güneş çağırır: Ateş hamleleri güçlenir, Su saldırıları tamamen kurur!',
+  },
+  delta_stream: {
+    id: 'delta_stream',
+    nameTr: 'Delta Akımı',
+    descTr: 'Gizemli hava akımı Uçan türünün tüm zayıflıklarını ortadan kaldırır!',
   },
 };
 

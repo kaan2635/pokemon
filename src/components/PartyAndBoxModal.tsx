@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ITEMS } from '../data/items';
+import { getAvailableMegaForm, getPrimalFormOnEntry } from '../data/megaEvolutions';
 import { MOVES } from '../data/moves';
 import { POKEDEX } from '../data/pokedex';
 import {
@@ -10,7 +11,8 @@ import {
   TYPE_NAMES_TR,
 } from '../data/typesAndNatures';
 import { PokemonInstance, StatKey } from '../types/game';
-import { ArrowUpCircle, Box, Sparkles, X, Shield } from 'lucide-react';
+import { assetUrl } from '../utils/assetPath';
+import { ArrowUpCircle, BookOpenCheck, Box, Sparkles, X, Shield } from 'lucide-react';
 
 interface PartyAndBoxModalProps {
   party: PokemonInstance[];
@@ -19,6 +21,7 @@ interface PartyAndBoxModalProps {
   onMakeLead: (idx: number) => void;
   onEquipItem: (partyIdx: number, itemId: string | undefined) => void;
   onUseItemOnParty: (partyIdx: number, itemId: string, replaceMoveIdx?: number) => string;
+  onRelearnMove: (partyIdx: number, moveId: string, replaceMoveIdx?: number) => string;
   onDepositToBox: (partyIdx: number) => void;
   onWithdrawFromBox: (boxIdx: number) => void;
   onReleaseBoxMon?: (boxIdx: number) => void;
@@ -32,6 +35,7 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
   onMakeLead,
   onEquipItem,
   onUseItemOnParty,
+  onRelearnMove,
   onDepositToBox,
   onWithdrawFromBox,
   onClose,
@@ -39,11 +43,16 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
   const [tab, setTab] = useState<'party' | 'box'>('party');
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
   const [feedback, setFeedback] = useState<string>('');
-  const [tmPickMove, setTmPickMove] = useState<{ itemId: string } | null>(null);
+  const [tmPickMove, setTmPickMove] = useState<{ itemId?: string; relearnMoveId?: string } | null>(
+    null
+  );
 
   const selectedMon = party[selectedIdx] || party[0];
   const selectedSp = selectedMon ? POKEDEX[selectedMon.speciesId] : null;
   const natureDef = selectedMon ? NATURES[selectedMon.nature] : null;
+  const readyMega = selectedMon
+    ? getAvailableMegaForm(selectedMon) || getPrimalFormOnEntry(selectedMon)
+    : null;
 
   const heldCandidates = Object.entries(bag).filter(
     ([id, cnt]) => cnt > 0 && ITEMS[id]?.category === 'held_berry'
@@ -52,15 +61,44 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
     ([id, cnt]) => cnt > 0 && ITEMS[id]?.usableInParty && !ITEMS[id]?.repelSteps
   );
 
+  // Move Relearner candidates (all level-up moves up to current level not currently known)
+  const relearnableMoves =
+    selectedMon && selectedSp
+      ? Array.from(
+          new Set(
+            selectedSp.learnset
+              .filter(
+                (ls) =>
+                  ls.level <= selectedMon.level &&
+                  !selectedMon.moves.some((m) => m.moveId === ls.moveId)
+              )
+              .map((ls) => ls.moveId)
+          )
+        )
+      : [];
+
   const handleApplyUsable = (itemId: string) => {
     const it = ITEMS[itemId];
     if (!it || !selectedMon) return;
-    if (it.tmMoveId && selectedMon.moves.length >= 4 && !selectedMon.moves.some((m) => m.moveId === it.tmMoveId)) {
+    if (
+      it.tmMoveId &&
+      selectedMon.moves.length >= 4 &&
+      !selectedMon.moves.some((m) => m.moveId === it.tmMoveId)
+    ) {
       setTmPickMove({ itemId });
       return;
     }
     const msg = onUseItemOnParty(selectedIdx, itemId);
     setFeedback(msg);
+  };
+
+  const handleClickRelearn = (moveId: string) => {
+    if (!selectedMon) return;
+    if (selectedMon.moves.length >= 4) {
+      setTmPickMove({ relearnMoveId: moveId });
+      return;
+    }
+    setFeedback(onRelearnMove(selectedIdx, moveId));
   };
 
   return (
@@ -113,6 +151,7 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                 const sp = POKEDEX[mon.speciesId];
                 const isSel = idx === selectedIdx;
                 const hpPct = Math.round((mon.currentHp / Math.max(1, mon.maxHp)) * 100);
+                const monMega = getAvailableMegaForm(mon) || getPrimalFormOnEntry(mon);
                 return (
                   <div
                     key={mon.uid}
@@ -127,13 +166,13 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                     }`}
                   >
                     <img
-                      src={`/sprites/icons/${mon.speciesId}.png`}
+                      src={assetUrl(`sprites/icons/${mon.speciesId}.png`)}
                       alt={sp.name}
                       style={{ imageRendering: 'pixelated' }}
                       className="w-10 h-10 shrink-0"
                     />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-1">
                         <span className="font-black text-sm text-white truncate">
                           {idx === 0 && (
                             <span className="text-amber-300 mr-1" title="Takipçi Lider">
@@ -143,7 +182,9 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                           {mon.isShiny && '✨ '}
                           {mon.nickname || sp.name}
                         </span>
-                        <span className="text-xs font-bold text-emerald-300">Lv.{mon.level}</span>
+                        <span className="text-xs font-bold text-emerald-300 shrink-0">
+                          Lv.{mon.level}
+                        </span>
                       </div>
                       <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mt-1">
                         <div
@@ -160,11 +201,15 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                             <span className="text-amber-300 font-bold uppercase">({mon.status})</span>
                           )}
                         </span>
-                        {mon.heldItem && (
+                        {monMega ? (
+                          <span className="text-fuchsia-300 font-bold truncate">
+                            ✨ {monMega.nameTr}
+                          </span>
+                        ) : mon.heldItem ? (
                           <span className="text-sky-300 truncate">
                             🎒 {ITEMS[mon.heldItem]?.nameTr}
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -186,8 +231,8 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                     <img
                       src={
                         selectedMon.isShiny
-                          ? `/sprites/shiny/${selectedMon.speciesId}.png`
-                          : `/sprites/front/${selectedMon.speciesId}.png`
+                          ? assetUrl(`sprites/shiny/${selectedMon.speciesId}.png`)
+                          : assetUrl(`sprites/front/${selectedMon.speciesId}.png`)
                       }
                       alt={selectedSp.name}
                       style={{ imageRendering: 'pixelated' }}
@@ -208,7 +253,17 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                           </span>
                         ))}
                       </div>
-                      <div className="text-xs text-amber-300 font-semibold mt-1">
+                      {readyMega && (
+                        <div className="text-xs font-black text-fuchsia-300 mt-1 flex items-center gap-1">
+                          <img
+                            src={assetUrl('sprites/items/mega-ring.png')}
+                            alt=""
+                            className="w-4 h-4"
+                          />
+                          Mega Savaş Hazır → {readyMega.nameTr}!
+                        </div>
+                      )}
+                      <div className="text-xs text-amber-300 font-semibold mt-0.5">
                         Doğa: {natureDef?.nameTr || selectedMon.nature}
                       </div>
                       <div className="text-xs text-emerald-400 font-semibold">
@@ -253,7 +308,9 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                 <div>
                   <div className="text-xs font-bold text-slate-400 uppercase mb-1.5 flex items-center justify-between">
                     <span>İstatistikler (GBA Doğa Etkisi &amp; IV/EV)</span>
-                    <span>Sonraki Seviye EXP: {Math.max(0, selectedMon.nextLevelExp - selectedMon.exp)}</span>
+                    <span>
+                      Sonraki Seviye EXP: {Math.max(0, selectedMon.nextLevelExp - selectedMon.exp)}
+                    </span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {(Object.keys(STAT_NAMES_TR) as StatKey[]).map((sk) => {
@@ -289,12 +346,12 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                   </div>
                 </div>
 
-                {/* Held Item Equip / Unequip */}
+                {/* Held Item & Mega Stone Equip / Unequip */}
                 <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
                       <Shield className="w-3.5 h-3.5" />
-                      Tutulan Eşya:{' '}
+                      Tutulan Eşya / Mega Taş:{' '}
                       {selectedMon.heldItem ? ITEMS[selectedMon.heldItem]?.nameTr : 'Yok'}
                     </span>
                     {selectedMon.heldItem && (
@@ -311,19 +368,31 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                   </div>
                   {heldCandidates.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
-                      {heldCandidates.map(([id, cnt]) => (
-                        <button
-                          key={id}
-                          onClick={() => {
-                            onEquipItem(selectedIdx, id);
-                            setFeedback(`${ITEMS[id]?.nameTr} tutturuldu!`);
-                          }}
-                          className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-sky-950 border border-slate-700 text-[11px] text-slate-200 flex items-center gap-1"
-                        >
-                          <img src={`/sprites/items/${ITEMS[id].sprite}`} alt="" className="w-4 h-4" />
-                          {ITEMS[id].nameTr} (x{cnt})
-                        </button>
-                      ))}
+                      {heldCandidates.map(([id, cnt]) => {
+                        const it = ITEMS[id];
+                        const isMatchingMega = it.megaStoneFor === selectedMon.speciesId;
+                        return (
+                          <button
+                            key={id}
+                            onClick={() => {
+                              onEquipItem(selectedIdx, id);
+                              setFeedback(`${it.nameTr} tutturuldu!`);
+                            }}
+                            className={`px-2 py-1 rounded-lg border text-[11px] flex items-center gap-1 ${
+                              isMatchingMega
+                                ? 'bg-fuchsia-950 hover:bg-fuchsia-900 border-fuchsia-400 text-fuchsia-100 font-black'
+                                : 'bg-slate-800 hover:bg-sky-950 border-slate-700 text-slate-200'
+                            }`}
+                          >
+                            <img
+                              src={assetUrl(`sprites/items/${it.sprite}`)}
+                              alt=""
+                              className="w-4 h-4"
+                            />
+                            {it.nameTr.split(' (')[0]} (x{cnt}) {isMatchingMega ? '✨ UYUMLU!' : ''}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -353,7 +422,11 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                             </span>
                           </div>
                           <div className="text-[10px] text-slate-400 mt-1">
-                            {md.category === 'physical' ? '💥 Fiziksel' : md.category === 'special' ? '🌀 Özel' : '✨ Durum'}{' '}
+                            {md.category === 'physical'
+                              ? '💥 Fiziksel'
+                              : md.category === 'special'
+                              ? '🌀 Özel'
+                              : '✨ Durum'}{' '}
                             • Güç: {md.power || '-'} • PP: {ms.pp}/{ms.maxPp}
                           </div>
                         </div>
@@ -362,12 +435,37 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                   </div>
                 </div>
 
-                {/* Quick Apply Medicine / Evo Stone / TM / Rare Candy */}
+                {/* FREE MOVE RELEARNER (Radical Red / Emerald Imperium QoL!) */}
+                {relearnableMoves.length > 0 && (
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3">
+                    <div className="text-xs font-bold text-cyan-300 uppercase mb-1.5 flex items-center gap-1.5">
+                      <BookOpenCheck className="w-3.5 h-3.5" />
+                      Ücretsiz Hamle Hatırlatıcı (Move Relearner)
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {relearnableMoves.map((mid) => {
+                        const md = MOVES[mid];
+                        if (!md) return null;
+                        return (
+                          <button
+                            key={mid}
+                            onClick={() => handleClickRelearn(mid)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-cyan-950 border border-slate-700 hover:border-cyan-400 text-[11px] text-slate-200 font-semibold"
+                          >
+                            + {md.nameTr} ({TYPE_NAMES_TR[md.type]})
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Quick Apply Medicine / Evo Stone / TM / Rare Candy / Ability Capsule */}
                 {usableItems.length > 0 && (
                   <div>
                     <div className="text-xs font-bold text-amber-300 uppercase mb-1.5 flex items-center gap-1">
                       <Sparkles className="w-3.5 h-3.5" />
-                      Hızlı Eşya / Evrim Taşı / TM Kullan
+                      Hızlı Eşya / Evrim Taşı / TM / Kapsül Kullan
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {usableItems.map(([id, cnt]) => (
@@ -376,7 +474,11 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                           onClick={() => handleApplyUsable(id)}
                           className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-emerald-950 border border-slate-700 text-xs text-slate-200 flex items-center gap-1.5"
                         >
-                          <img src={`/sprites/items/${ITEMS[id].sprite}`} alt="" className="w-4 h-4" />
+                          <img
+                            src={assetUrl(`sprites/items/${ITEMS[id].sprite}`)}
+                            alt=""
+                            className="w-4 h-4"
+                          />
                           {ITEMS[id].nameTr} {ITEMS[id].tmMoveId ? '(Sınırsız)' : `x${cnt}`}
                         </button>
                       ))}
@@ -390,7 +492,7 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
           /* PORTABLE PC BOX TAB */
           <div className="p-4 overflow-y-auto space-y-3">
             <p className="text-xs text-slate-400">
-              Bill&apos;in Taşınabilir GBA PC Sistemi! Kutudaki herhangi bir Pokémona tıklayarak takımına alabilirsin (Takımda boş yer olmalı; doluysa önce Takım sekmesinden bir Pokémonu kutuya gönder).
+              Bill&apos;in Taşınabilir GBA PC Sistemi! Kutudaki herhangi bir Pokémona tıklayarak takımına alabilirsin.
             </p>
             {pcBox.length === 0 ? (
               <div className="p-10 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl">
@@ -408,8 +510,8 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                       <img
                         src={
                           mon.isShiny
-                            ? `/sprites/shiny/${mon.speciesId}.png`
-                            : `/sprites/front/${mon.speciesId}.png`
+                            ? assetUrl(`sprites/shiny/${mon.speciesId}.png`)
+                            : assetUrl(`sprites/front/${mon.speciesId}.png`)
                         }
                         alt={sp.name}
                         style={{ imageRendering: 'pixelated' }}
@@ -441,10 +543,10 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
         )}
       </div>
 
-      {/* TM Move Slot Replacement Modal */}
+      {/* TM or Relearn Move Slot Replacement Modal */}
       {tmPickMove && selectedMon && (() => {
-        const it = ITEMS[tmPickMove.itemId];
-        const md = it?.tmMoveId ? MOVES[it.tmMoveId] : null;
+        const targetMoveId = tmPickMove.relearnMoveId || ITEMS[tmPickMove.itemId || '']?.tmMoveId;
+        const md = targetMoveId ? MOVES[targetMoveId] : null;
         if (!md) return null;
         return (
           <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
@@ -456,7 +558,9 @@ export const PartyAndBoxModal: React.FC<PartyAndBoxModalProps> = ({
                 <button
                   key={sl.moveId}
                   onClick={() => {
-                    const msg = onUseItemOnParty(selectedIdx, tmPickMove.itemId, mIdx);
+                    const msg = tmPickMove.relearnMoveId
+                      ? onRelearnMove(selectedIdx, tmPickMove.relearnMoveId, mIdx)
+                      : onUseItemOnParty(selectedIdx, tmPickMove.itemId!, mIdx);
                     setFeedback(msg);
                     setTmPickMove(null);
                   }}

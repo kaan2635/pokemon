@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ITEMS } from '../data/items';
+import {
+  getActiveDisplayName,
+  getActiveSpriteId,
+  getActiveTypes,
+  getAvailableMegaForm,
+  getPrimalFormOnEntry,
+  MEGA_FORMS,
+} from '../data/megaEvolutions';
 import { MOVES } from '../data/moves';
 import { POKEDEX } from '../data/pokedex';
 import {
@@ -20,8 +28,10 @@ import {
   StatStages,
 } from '../engine/battleEngine';
 import {
+  applyMegaTransformation,
   evolvePokemonInstance,
   grantExpToPokemon,
+  revertMegaTransformation,
 } from '../engine/pokemonFactory';
 import {
   PokemonInstance,
@@ -30,15 +40,26 @@ import {
   TrainerData,
   WeatherType,
 } from '../types/game';
-import { Sparkles, ShieldAlert, Backpack, RefreshCw, Footprints, Swords } from 'lucide-react';
+import { assetUrl } from '../utils/assetPath';
+import { Sparkles, ShieldAlert, Backpack, RefreshCw, Footprints, Swords, Flame } from 'lucide-react';
 
 export interface BattleSessionConfig {
-  kind: 'wild' | 'safari' | 'trainer' | 'gym' | 'elite4' | 'frontier_tower' | 'frontier_factory';
+  kind:
+    | 'wild'
+    | 'safari'
+    | 'raid'
+    | 'trainer'
+    | 'gym'
+    | 'elite4'
+    | 'frontier_tower'
+    | 'frontier_factory';
   enemyParty: PokemonInstance[];
   trainer?: TrainerData;
   weatherInitial: WeatherType;
   terrain: 'grass' | 'cave' | 'water' | 'indoor' | 'indigo';
   legendaryFlagToSetOnCatch?: string;
+  raidRewardItem?: string;
+  raidStars?: number;
 }
 
 export interface BattleOutcome {
@@ -92,7 +113,8 @@ export const BattleView: React.FC<BattleViewProps> = ({
 }) => {
   const isFrontier = config.kind === 'frontier_tower' || config.kind === 'frontier_factory';
   const isSafari = config.kind === 'safari';
-  const isWild = config.kind === 'wild' || config.kind === 'safari';
+  const isRaid = config.kind === 'raid';
+  const isWild = config.kind === 'wild' || config.kind === 'safari' || config.kind === 'raid';
 
   const firstAliveIdx = Math.max(
     0,
@@ -113,6 +135,17 @@ export const BattleView: React.FC<BattleViewProps> = ({
   const [playerSeeded, setPlayerSeeded] = useState(false);
   const [enemySeeded, setEnemySeeded] = useState(false);
   const [weather, setWeather] = useState<WeatherType>(config.weatherInitial);
+
+  // Mega Evolution & Primal Reversion States
+  const [playerMegaUsed, setPlayerMegaUsed] = useState(false);
+  const [enemyMegaUsed, setEnemyMegaUsed] = useState(false);
+  const [megaArmed, setMegaArmed] = useState(false);
+  const [megaBurst, setMegaBurst] = useState<{
+    titleTr: string;
+    nameTr: string;
+    spriteId: number;
+    isPrimal?: boolean;
+  } | null>(null);
 
   const [curBag, setCurBag] = useState<Record<string, number>>({ ...bag });
   const [curSafariBalls, setCurSafariBalls] = useState<number>(safariBalls);
@@ -154,24 +187,44 @@ export const BattleView: React.FC<BattleViewProps> = ({
   const wait = (ms: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, Math.max(90, Math.floor(ms / speedDiv))));
 
+  const finishBattle = (outcome: BattleOutcome) => {
+    const cleanedParty = outcome.updatedParty.map(revertMegaTransformation);
+    const cleanedCaught = outcome.caughtPokemon
+      ? revertMegaTransformation(outcome.caughtPokemon)
+      : undefined;
+    onFinish({
+      ...outcome,
+      updatedParty: cleanedParty,
+      caughtPokemon: cleanedCaught,
+    });
+  };
+
   const activePlayer = party[playerIdx];
   const activeEnemy = enemyTeam[enemyIdx];
   const playerSp = POKEDEX[activePlayer.speciesId];
   const enemySp = POKEDEX[activeEnemy.speciesId];
+  const availablePlayerMega = !playerMegaUsed ? getAvailableMegaForm(activePlayer) : null;
 
-  // Initial Battle Intro & Entry Ability Triggers!
+  // Initial Battle Intro, Primal Reversion & Entry Ability Triggers!
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (activeEnemy.isShiny) audio.playSfx('shiny');
+      let curP = { ...party[firstAliveIdx] };
+      let curE = { ...enemyTeam[0] };
+
+      if (curE.isShiny) audio.playSfx('shiny');
       if (config.trainer) {
         setMessage(`${config.trainer.titleTr} ${config.trainer.nameTr}: "${config.trainer.introTr}"`);
         await wait(1400);
         if (cancelled) return;
-        setMessage(`${config.trainer.nameTr}, ${enemySp.name} (Lv.${activeEnemy.level}) gönderdi!`);
+        setMessage(`${config.trainer.nameTr}, ${POKEDEX[curE.speciesId].name} (Lv.${curE.level}) gönderdi!`);
+      } else if (isRaid) {
+        setMessage(
+          `⚡ MAKSİMUM AKIN İNİ! Dev Alfa ${POKEDEX[curE.speciesId].name} (Lv.${curE.level} • ★${config.raidStars || 4}) kükreyerek belirdi!`
+        );
       } else {
         setMessage(
-          `Vahşi ${activeEnemy.isShiny ? '✨ PARLAK (SHINY) ' : ''}${enemySp.name} (Lv.${activeEnemy.level}) belirdi!`
+          `Vahşi ${curE.isShiny ? '✨ PARLAK (SHINY) ' : ''}${POKEDEX[curE.speciesId].name} (Lv.${curE.level}) belirdi!`
         );
       }
       await wait(900);
@@ -179,13 +232,46 @@ export const BattleView: React.FC<BattleViewProps> = ({
       setEnemyAnim('idle');
 
       if (!isSafari) {
-        setMessage(`Göreyim seni, ${activePlayer.nickname || playerSp.name}!`);
+        setMessage(`Göreyim seni, ${curP.nickname || POKEDEX[curP.speciesId].name}!`);
         await wait(700);
         if (cancelled) return;
 
+        // Check Primal Reversion on Entry (Kyogre w/ Blue Orb, Groudon w/ Red Orb)!
+        const pPrimal = getPrimalFormOnEntry(curP);
+        if (pPrimal) {
+          curP = applyMegaTransformation(curP, pPrimal);
+          setParty((prev) => prev.map((m, i) => (i === firstAliveIdx ? curP : m)));
+          audio.playSfx('level_up');
+          setMegaBurst({
+            titleTr: 'İLKEL DÖNÜŞÜM (PRIMAL REVERSION)!',
+            nameTr: pPrimal.nameTr,
+            spriteId: pPrimal.spriteId,
+            isPrimal: true,
+          });
+          setMessage(`${POKEDEX[curP.speciesId].name} kadim kürenin gücüyle ${pPrimal.nameTr} formuna büründü!`);
+          await wait(1200);
+          setMegaBurst(null);
+        }
+
+        const ePrimal = getPrimalFormOnEntry(curE);
+        if (ePrimal) {
+          curE = applyMegaTransformation(curE, ePrimal);
+          setEnemyTeam((prev) => prev.map((m, i) => (i === 0 ? curE : m)));
+          audio.playSfx('level_up');
+          setMegaBurst({
+            titleTr: 'İLKEL DÖNÜŞÜM (PRIMAL REVERSION)!',
+            nameTr: ePrimal.nameTr,
+            spriteId: ePrimal.spriteId,
+            isPrimal: true,
+          });
+          setMessage(`Rakip ${POKEDEX[curE.speciesId].name}, ${ePrimal.nameTr} formuna dönüştü!`);
+          await wait(1200);
+          setMegaBurst(null);
+        }
+
         // Entry abilities for both sides
         let w = config.weatherInitial;
-        const pEntry = applyEntryAbilities(activePlayer, activeEnemy, w);
+        const pEntry = applyEntryAbilities(curP, curE, w);
         if (pEntry.newWeather) w = pEntry.newWeather;
         if (pEntry.foeAtkDrop) {
           setEnemyStages((st) => ({ ...st, atk: Math.max(-6, st.atk + pEntry.foeAtkDrop!) }));
@@ -195,7 +281,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
           await wait(750);
         }
 
-        const eEntry = applyEntryAbilities(activeEnemy, activePlayer, w);
+        const eEntry = applyEntryAbilities(curE, curP, w);
         if (eEntry.newWeather) w = eEntry.newWeather;
         if (eEntry.foeAtkDrop) {
           setPlayerStages((st) => ({ ...st, atk: Math.max(-6, st.atk + eEntry.foeAtkDrop!) }));
@@ -226,7 +312,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
   ): Promise<PokemonInstance[]> => {
     audio.playSfx('faint');
     setEnemyAnim('faint');
-    const eName = POKEDEX[defeatedEnemy.speciesId].name;
+    const eName = getActiveDisplayName(defeatedEnemy);
     setMessage(`Rakip ${eName} bayıldı!`);
     await wait(900);
 
@@ -235,7 +321,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
     }
 
     const defSp = POKEDEX[defeatedEnemy.speciesId];
-    const trainerBonus = isWild ? 1 : 1.5;
+    const trainerBonus = isRaid ? 1.8 : isWild ? 1 : 1.5;
     const baseExpGain = Math.max(
       18,
       Math.floor((defSp.baseExp * defeatedEnemy.level * trainerBonus) / 5)
@@ -243,25 +329,30 @@ export const BattleView: React.FC<BattleViewProps> = ({
 
     const updatedParty = [...curParty];
     for (let i = 0; i < updatedParty.length; i++) {
-      const m = updatedParty[i];
+      // Revert Mega temporarily if leveling/evolving so base stats stay pure, then re-apply if still Mega!
+      const wasMegaId = updatedParty[i].megaFormId;
+      const m = wasMegaId ? revertMegaTransformation(updatedParty[i]) : updatedParty[i];
       if (m.currentHp <= 0) continue;
       if (i !== curPIdx && !expShareAll) continue;
 
       const gain = i === curPIdx ? baseExpGain : Math.max(10, Math.floor(baseExpGain * 0.55));
       const outcome = grantExpToPokemon(m, gain, i === curPIdx ? defSp.evYield : undefined);
-      updatedParty[i] = outcome.updated;
+      let nextMon = outcome.updated;
 
       if (i === curPIdx) {
         setMessage(`${m.nickname || POKEDEX[m.speciesId].name} ${gain} EXP kazandı!`);
-        setParty([...updatedParty]);
+        setParty(
+          updatedParty.map((pm, idx) =>
+            idx === i ? (wasMegaId && MEGA_FORMS[wasMegaId] ? applyMegaTransformation(nextMon, MEGA_FORMS[wasMegaId]) : nextMon) : pm
+          )
+        );
         await wait(650);
       }
 
       if (outcome.levelsGained > 0) {
         audio.playSfx('level_up');
-        const mName = updatedParty[i].nickname || POKEDEX[updatedParty[i].speciesId].name;
-        setMessage(`${mName} Seviye ${updatedParty[i].level} oldu!`);
-        setParty([...updatedParty]);
+        const mName = nextMon.nickname || POKEDEX[nextMon.speciesId].name;
+        setMessage(`${mName} Seviye ${nextMon.level} oldu!`);
         await wait(850);
 
         for (const learned of outcome.autoLearnedMoves) {
@@ -270,24 +361,21 @@ export const BattleView: React.FC<BattleViewProps> = ({
         }
 
         for (const pendingMove of outcome.pendingLearnMoves) {
-          const updatedMon = await new Promise<PokemonInstance>((resolve) => {
+          nextMon = await new Promise<PokemonInstance>((resolve) => {
             moveLearnResolverRef.current = resolve;
             setMoveLearnPrompt({ partyIndex: i, moveId: pendingMove });
           });
-          updatedParty[i] = updatedMon;
-          setParty([...updatedParty]);
         }
 
-        if (outcome.evolveToSpeciesId) {
-          const fromId = updatedParty[i].speciesId;
+        if (outcome.evolveToSpeciesId && !wasMegaId) {
+          const fromId = nextMon.speciesId;
           const toId = outcome.evolveToSpeciesId;
           setEvoBanner({ fromId, toId });
           audio.playSfx('catch_success');
           setMessage(`Ne?! ${POKEDEX[fromId].name} evrim geçiriyor!`);
           await wait(1600);
-          const { evolved, learnedMoves } = evolvePokemonInstance(updatedParty[i], toId);
-          updatedParty[i] = evolved;
-          setParty([...updatedParty]);
+          const { evolved, learnedMoves } = evolvePokemonInstance(nextMon, toId);
+          nextMon = evolved;
           setMessage(`Tebrikler! ${POKEDEX[fromId].name}, ${POKEDEX[toId].name} olarak evrimleşti!`);
           await wait(1300);
           setEvoBanner(null);
@@ -297,6 +385,12 @@ export const BattleView: React.FC<BattleViewProps> = ({
           }
         }
       }
+
+      updatedParty[i] =
+        wasMegaId && MEGA_FORMS[wasMegaId]
+          ? applyMegaTransformation(nextMon, MEGA_FORMS[wasMegaId])
+          : nextMon;
+      setParty([...updatedParty]);
     }
 
     return updatedParty;
@@ -316,15 +410,17 @@ export const BattleView: React.FC<BattleViewProps> = ({
         await wait(1000);
         setMessage(`${config.trainer.nameTr}: "${config.trainer.defeatTr}"`);
         await wait(1300);
+      } else if (isRaid) {
+        setMessage(`⚡ Dev Alfa Akın Boss'u mağlup edildi! Akın hazinesi senin!`);
+        await wait(1100);
       } else {
         setMessage(`Savaşı kazandın!`);
         await wait(750);
       }
-      // Natural Cure heal on exit
       const finalParty = nextParty.map((m) =>
         m.ability === 'natural_cure' && m.currentHp > 0 ? { ...m, status: 'none' as const, sleepTurns: 0 } : m
       );
-      onFinish({
+      finishBattle({
         result: 'win',
         updatedParty: finalParty,
         updatedBag: curBag,
@@ -335,7 +431,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
     }
 
     // Trainer sends next Pokemon!
-    const nextFoe = curEnemyTeam[nextEnemyIdx];
+    let nextFoe = curEnemyTeam[nextEnemyIdx];
     const nextFoeSp = POKEDEX[nextFoe.speciesId];
     const updatedSeen = new Set(seenIds);
     updatedSeen.add(nextFoe.speciesId);
@@ -348,6 +444,22 @@ export const BattleView: React.FC<BattleViewProps> = ({
     setMessage(`${config.trainer?.nameTr || 'Rakip'}, ${nextFoeSp.name} (Lv.${nextFoe.level}) sahaya sürdü!`);
     await wait(900);
     setEnemyAnim('idle');
+
+    const ePrimal = getPrimalFormOnEntry(nextFoe);
+    if (ePrimal) {
+      nextFoe = applyMegaTransformation(nextFoe, ePrimal);
+      setEnemyTeam((prev) => prev.map((m, i) => (i === nextEnemyIdx ? nextFoe : m)));
+      audio.playSfx('level_up');
+      setMegaBurst({
+        titleTr: 'İLKEL DÖNÜŞÜM!',
+        nameTr: ePrimal.nameTr,
+        spriteId: ePrimal.spriteId,
+        isPrimal: true,
+      });
+      setMessage(`Rakip ${nextFoeSp.name}, ${ePrimal.nameTr} formuna dönüştü!`);
+      await wait(1100);
+      setMegaBurst(null);
+    }
 
     const eEntry = applyEntryAbilities(nextFoe, nextParty[playerIdx], weather);
     if (eEntry.newWeather) setWeather(eEntry.newWeather);
@@ -449,7 +561,80 @@ export const BattleView: React.FC<BattleViewProps> = ({
     let eStg = { ...enemyStages };
     let curW = weather;
 
-    // Check if Enemy Boss Trainer wants to use a Healing Item first!
+    // 1. PLAYER MEGA EVOLUTION TRIGGER!
+    if (megaArmed && !playerMegaUsed) {
+      const megaForm = getAvailableMegaForm(pMon);
+      if (megaForm) {
+        const oldName = pMon.nickname || POKEDEX[pMon.speciesId].name;
+        pMon = applyMegaTransformation(pMon, megaForm);
+        setPlayerMegaUsed(true);
+        setMegaArmed(false);
+        setParty((prev) => prev.map((m, idx) => (idx === playerIdx ? pMon : m)));
+
+        audio.playSfx('catch_success');
+        setMegaBurst({
+          titleTr: '✨ MEGA EVRİM (MEGA EVOLUTION)! ✨',
+          nameTr: megaForm.nameTr,
+          spriteId: megaForm.spriteId,
+        });
+        setMessage(`${oldName} Mega Bileklik ile rezonansa girip ${megaForm.nameTr} formuna Mega Evrimleşti!`);
+        await wait(1350);
+        setMegaBurst(null);
+
+        const mEntry = applyEntryAbilities(pMon, eMon, curW);
+        if (mEntry.newWeather) {
+          curW = mEntry.newWeather;
+          setWeather(curW);
+        }
+        if (mEntry.foeAtkDrop) {
+          eStg = { ...eStg, atk: Math.max(-6, eStg.atk + mEntry.foeAtkDrop) };
+          setEnemyStages(eStg);
+        }
+        for (const l of mEntry.logs) {
+          setMessage(l);
+          await wait(680);
+        }
+      }
+    }
+
+    // 2. ENEMY BOSS AI MEGA EVOLUTION TRIGGER!
+    if (!enemyMegaUsed) {
+      const foeMega = getAvailableMegaForm(eMon);
+      if (foeMega) {
+        const foeOldName = POKEDEX[eMon.speciesId].name;
+        eMon = applyMegaTransformation(eMon, foeMega);
+        setEnemyMegaUsed(true);
+        setEnemyTeam((prev) => prev.map((m, idx) => (idx === enemyIdx ? eMon : m)));
+
+        audio.playSfx('catch_success');
+        setMegaBurst({
+          titleTr: '⚡ RAKİP MEGA EVRİM GEÇİRİYOR! ⚡',
+          nameTr: foeMega.nameTr,
+          spriteId: foeMega.spriteId,
+        });
+        setMessage(
+          `${config.trainer?.nameTr || 'Rakip'} Anahtar Taşını ateşledi! ${foeOldName}, ${foeMega.nameTr} oldu!`
+        );
+        await wait(1350);
+        setMegaBurst(null);
+
+        const eEntry = applyEntryAbilities(eMon, pMon, curW);
+        if (eEntry.newWeather) {
+          curW = eEntry.newWeather;
+          setWeather(curW);
+        }
+        if (eEntry.foeAtkDrop) {
+          pStg = { ...pStg, atk: Math.max(-6, pStg.atk + eEntry.foeAtkDrop) };
+          setPlayerStages(pStg);
+        }
+        for (const l of eEntry.logs) {
+          setMessage(l);
+          await wait(680);
+        }
+      }
+    }
+
+    // Check if Enemy Boss Trainer wants to use a Healing Item!
     let enemyUsedHealItem = false;
     if (
       config.trainer &&
@@ -499,7 +684,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
 
       if (eMon.currentHp > 0 && pMon.currentHp > 0 && !enemyUsedHealItem) {
         if (s1.flinched) {
-          setMessage(`${POKEDEX[eMon.speciesId].name} ürperdi ve saldırı yapamadı!`);
+          setMessage(`${getActiveDisplayName(eMon)} ürperdi ve saldırı yapamadı!`);
           await wait(750);
         } else {
           const s2 = await performAttackStep(
@@ -518,8 +703,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
           eStg = s2.eStg;
           curW = s2.weather;
         }
-      } else if (s1.flinched) {
-        // enemy fainted already
       }
     } else {
       if (!enemyUsedHealItem) {
@@ -533,7 +716,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
 
         if (pMon.currentHp > 0 && eMon.currentHp > 0) {
           if (s1.flinched) {
-            setMessage(`${pMon.nickname || POKEDEX[pMon.speciesId].name} ürperdi ve saldıramadı!`);
+            setMessage(`${getActiveDisplayName(pMon)} ürperdi ve saldıramadı!`);
             await wait(750);
           } else {
             const s2 = await performAttackStep(
@@ -563,7 +746,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
       }
     }
 
-    // End of Turn Effects (Weather, Leftovers, Leech Seed, Burn/Poison, Speed Boost)
+    // End of Turn Effects
     if (pMon.currentHp > 0 && eMon.currentHp > 0) {
       const eotP = applyEndOfTurnEffects({
         mon: pMon,
@@ -622,14 +805,14 @@ export const BattleView: React.FC<BattleViewProps> = ({
     if (workingParty[playerIdx].currentHp <= 0) {
       audio.playSfx('faint');
       setPlayerAnim('faint');
-      setMessage(`${workingParty[playerIdx].nickname || POKEDEX[workingParty[playerIdx].speciesId].name} bayıldı!`);
+      setMessage(`${getActiveDisplayName(workingParty[playerIdx])} bayıldı!`);
       await wait(950);
 
       const hasAlive = workingParty.some((m) => m.currentHp > 0);
       if (!hasAlive) {
         setMessage('Kullanılabilir hiç Pokémonun kalmadı! Gözlerin kararıyor...');
         await wait(1200);
-        onFinish({
+        finishBattle({
           result: 'lose',
           updatedParty: workingParty,
           updatedBag: curBag,
@@ -675,10 +858,10 @@ export const BattleView: React.FC<BattleViewProps> = ({
     if (step.pMon.currentHp <= 0) {
       audio.playSfx('faint');
       setPlayerAnim('faint');
-      setMessage(`${step.pMon.nickname || POKEDEX[step.pMon.speciesId].name} bayıldı!`);
+      setMessage(`${getActiveDisplayName(step.pMon)} bayıldı!`);
       await wait(900);
       if (!updatedParty.some((m) => m.currentHp > 0)) {
-        onFinish({
+        finishBattle({
           result: 'lose',
           updatedParty,
           updatedBag: curBag,
@@ -701,24 +884,42 @@ export const BattleView: React.FC<BattleViewProps> = ({
     if (busy || targetIdx === playerIdx || party[targetIdx].currentHp <= 0) return;
     const wasForced = menuMode === 'force_switch';
     setBusy(true);
+    setMegaArmed(false);
     setMenuMode('root');
 
-    // Natural Cure on outgoing Pokemon
-    const nextParty = party.map((m, idx) =>
+    let nextParty = party.map((m, idx) =>
       idx === playerIdx && m.ability === 'natural_cure' && m.currentHp > 0
         ? { ...m, status: 'none' as const, sleepTurns: 0 }
         : m
     );
-    setParty(nextParty);
 
+    let newMon = nextParty[targetIdx];
+    const pPrimal = getPrimalFormOnEntry(newMon);
+    if (pPrimal) {
+      newMon = applyMegaTransformation(newMon, pPrimal);
+      nextParty = nextParty.map((m, i) => (i === targetIdx ? newMon : m));
+    }
+
+    setParty(nextParty);
     setPlayerIdx(targetIdx);
     setPlayerStages(emptyStages());
     setPlayerSeeded(false);
     setPlayerAnim('idle');
 
-    const newMon = nextParty[targetIdx];
-    setMessage(`İleri, ${newMon.nickname || POKEDEX[newMon.speciesId].name}!`);
+    setMessage(`İleri, ${ getActiveDisplayName(newMon) }!`);
     await wait(750);
+
+    if (pPrimal) {
+      audio.playSfx('level_up');
+      setMegaBurst({
+        titleTr: 'İLKEL DÖNÜŞÜM!',
+        nameTr: pPrimal.nameTr,
+        spriteId: pPrimal.spriteId,
+        isPrimal: true,
+      });
+      await wait(950);
+      setMegaBurst(null);
+    }
 
     const pEntry = applyEntryAbilities(newMon, activeEnemy, weather);
     if (pEntry.newWeather) setWeather(pEntry.newWeather);
@@ -733,7 +934,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
     if (!wasForced) {
       await runEnemyFreeAttack(nextParty, targetIdx);
     } else {
-      // Check if enemy had also fainted simultaneously
       if (enemyTeam[enemyIdx].currentHp <= 0) {
         await advanceAfterEnemyFaint(nextParty, enemyTeam, enemyIdx);
       } else {
@@ -755,6 +955,10 @@ export const BattleView: React.FC<BattleViewProps> = ({
         setMessage('Başka bir eğitmenin Pokémonuna top atamazsın!');
         return;
       }
+      if (isRaid && activeEnemy.currentHp > activeEnemy.maxHp * 0.45 && itemId !== 'master-ball') {
+        setMessage('⚡ Akın Boss kalkanı aktif! Top atmadan önce canını %45 altına indir!');
+        return;
+      }
       setBusy(true);
       setMenuMode('root');
 
@@ -773,7 +977,11 @@ export const BattleView: React.FC<BattleViewProps> = ({
       setPokeballAnim({ sprite: item.sprite, phase: 'throw' });
       await wait(550);
 
-      const { caught, shakes } = calculateCatchAttempt(activeEnemy, itemId, safariCatchMod);
+      const { caught, shakes } = calculateCatchAttempt(
+        activeEnemy,
+        itemId,
+        isRaid ? 1.8 : safariCatchMod
+      );
       const phases: Array<'shake1' | 'shake2' | 'shake3'> = ['shake1', 'shake2', 'shake3'];
       for (let s = 0; s < shakes; s++) {
         audio.playSfx('ball_shake');
@@ -789,7 +997,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
         await wait(1400);
 
         const caughtInstance: PokemonInstance = {
-          ...activeEnemy,
+          ...revertMegaTransformation(activeEnemy),
           pokeball: itemId,
         };
         const nextBag = { ...curBag };
@@ -797,7 +1005,8 @@ export const BattleView: React.FC<BattleViewProps> = ({
           nextBag[itemId] = (nextBag[itemId] || 1) - 1;
           if (nextBag[itemId] <= 0) delete nextBag[itemId];
         }
-        onFinish({
+
+        finishBattle({
           result: 'caught',
           updatedParty: party,
           updatedBag: nextBag,
@@ -844,7 +1053,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
     if (nextBag[itemId] <= 0) delete nextBag[itemId];
     setCurBag(nextBag);
 
-    let updatedTarget = { ...target };
+    const updatedTarget = { ...target };
     if (item.revivePercent) {
       updatedTarget.currentHp = Math.max(1, Math.floor((target.maxHp * item.revivePercent) / 100));
       updatedTarget.status = 'none';
@@ -870,18 +1079,18 @@ export const BattleView: React.FC<BattleViewProps> = ({
     const nextParty = party.map((m, idx) => (idx === tIdx ? updatedTarget : m));
     setParty(nextParty);
     audio.playSfx('heal');
-    setMessage(`${POKEDEX[target.speciesId].name} üzerinde ${item.nameTr} kullanıldı!`);
+    setMessage(`${getActiveDisplayName(target)} üzerinde ${item.nameTr} kullanıldı!`);
     await wait(850);
 
     await runEnemyFreeAttack(nextParty, playerIdx);
   };
 
-  // Safari Zone Special Actions (Bait / Rock)
+  // Safari Zone Special Actions
   const checkSafariWildTurn = async (ballsLeft: number) => {
     if (ballsLeft <= 0) {
       setMessage('Safari Topların tükendi! Safari turu sona erdi.');
       await wait(1000);
-      onFinish({
+      finishBattle({
         result: 'escaped',
         updatedParty: party,
         updatedBag: curBag,
@@ -894,7 +1103,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
     if (Math.random() < fleeProb) {
       setMessage(`Vahşi ${enemySp.name} çalıların arasına kaçtı!`);
       await wait(1000);
-      onFinish({
+      finishBattle({
         result: 'escaped',
         updatedParty: party,
         updatedBag: curBag,
@@ -927,7 +1136,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
     await checkSafariWildTurn(curSafariBalls);
   };
 
-  // Run Action
   const handleRun = async () => {
     if (busy) return;
     if (!isWild) {
@@ -935,11 +1143,11 @@ export const BattleView: React.FC<BattleViewProps> = ({
       return;
     }
     setBusy(true);
-    if (isSafari || activePlayer.stats.spe >= activeEnemy.stats.spe || Math.random() < 0.78) {
+    if (isSafari || isRaid || activePlayer.stats.spe >= activeEnemy.stats.spe || Math.random() < 0.78) {
       audio.playSfx('cancel');
       setMessage('Güvenli bir şekilde uzaklaştın!');
       await wait(700);
-      onFinish({
+      finishBattle({
         result: 'escaped',
         updatedParty: party,
         updatedBag: curBag,
@@ -960,13 +1168,15 @@ export const BattleView: React.FC<BattleViewProps> = ({
     return 'bg-red-500';
   };
 
-  const terrainGradient = {
-    grass: 'from-sky-400 via-emerald-300 to-emerald-600',
-    water: 'from-sky-500 via-cyan-400 to-blue-700',
-    cave: 'from-stone-800 via-amber-950 to-stone-900',
-    indoor: 'from-slate-700 via-slate-600 to-slate-800',
-    indigo: 'from-indigo-950 via-purple-900 to-slate-900',
-  }[config.terrain];
+  const terrainGradient = isRaid
+    ? 'from-rose-950 via-purple-900 to-slate-950'
+    : {
+        grass: 'from-sky-400 via-emerald-300 to-emerald-600',
+        water: 'from-sky-500 via-cyan-400 to-blue-700',
+        cave: 'from-stone-800 via-amber-950 to-stone-900',
+        indoor: 'from-slate-700 via-slate-600 to-slate-800',
+        indigo: 'from-indigo-950 via-purple-900 to-slate-900',
+      }[config.terrain];
 
   const isAlreadyCaught = pokedexCaught.includes(activeEnemy.speciesId);
   const expCurrBase = Math.pow(activePlayer.level, 3);
@@ -982,15 +1192,25 @@ export const BattleView: React.FC<BattleViewProps> = ({
           )
         );
 
+  const activeEnemySpriteId = getActiveSpriteId(activeEnemy);
+  const activePlayerSpriteId = getActiveSpriteId(activePlayer);
+  const activeEnemyTypes = getActiveTypes(activeEnemy);
+
   return (
     <div className="fixed inset-0 z-40 bg-slate-950/95 flex items-center justify-center p-2 sm:p-4">
       <div className="w-full max-w-4xl bg-slate-900 border-4 border-slate-700 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
         {/* Top Weather & Battle Mode Bar */}
         <div className="px-4 py-1.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2 font-bold text-slate-200">
-            <Swords className="w-3.5 h-3.5 text-amber-400" />
+            {isRaid ? (
+              <Flame className="w-4 h-4 text-rose-400 animate-pulse" />
+            ) : (
+              <Swords className="w-3.5 h-3.5 text-amber-400" />
+            )}
             {config.trainer
               ? `${config.trainer.titleTr} ${config.trainer.nameTr}`
+              : isRaid
+              ? `MAKSİMUM AKIN İNİ (${'★'.repeat(config.raidStars || 4)})`
               : isSafari
               ? `GBA SAFARİ BÖLGESİ (Kalan Top: ${curSafariBalls})`
               : 'Vahşi Pokémon Karşılaşması'}
@@ -1004,7 +1224,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
         <div
           className={`relative h-64 sm:h-80 w-full bg-gradient-to-b ${terrainGradient} overflow-hidden select-none`}
         >
-          {/* Weather Overlay on Battle Canvas */}
+          {/* Weather / Raid Overlay on Battle Canvas */}
           {weather === 'sun' && (
             <div className="absolute inset-0 bg-amber-300/20 pointer-events-none" />
           )}
@@ -1015,22 +1235,32 @@ export const BattleView: React.FC<BattleViewProps> = ({
             <div className="absolute inset-0 bg-amber-700/25 pointer-events-none" />
           )}
 
-          {/* ENEMY STATUS CARD (Top Left - Authentic GBA Cream Frame!) */}
-          <div className="absolute top-3 left-3 sm:top-5 sm:left-6 z-10 w-56 sm:w-64 bg-amber-50/95 border-[3px] border-slate-800 rounded-xl px-3 py-2 shadow-lg text-slate-900">
+          {/* ENEMY STATUS CARD */}
+          <div className="absolute top-3 left-3 sm:top-5 sm:left-6 z-10 w-60 sm:w-72 bg-amber-50/95 border-[3px] border-slate-800 rounded-xl px-3 py-2 shadow-lg text-slate-900">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1 font-black text-xs sm:text-sm truncate">
+                {activeEnemy.megaFormId && (
+                  <span className="px-1 py-0.5 rounded bg-gradient-to-r from-fuchsia-600 to-amber-500 text-white text-[9px] font-black">
+                    MEGA
+                  </span>
+                )}
+                {isRaid && (
+                  <span className="px-1 py-0.5 rounded bg-rose-600 text-white text-[9px] font-black">
+                    ALFA BOSS
+                  </span>
+                )}
                 {activeEnemy.isShiny && <span className="text-amber-500">✨</span>}
-                <span>{enemySp.name}</span>
+                <span className="truncate">{getActiveDisplayName(activeEnemy)}</span>
                 {isAlreadyCaught && isWild && (
                   <img
-                    src="/sprites/items/poke-ball.png"
+                    src={assetUrl('sprites/items/poke-ball.png')}
                     alt="Yakalandı"
                     title="Pokédex'te Kayıtlı!"
                     className="w-4 h-4 inline"
                   />
                 )}
               </div>
-              <span className="font-black text-xs text-slate-700">Lv.{activeEnemy.level}</span>
+              <span className="font-black text-xs text-slate-700 shrink-0">Lv.{activeEnemy.level}</span>
             </div>
 
             <div className="flex items-center gap-1.5 mt-1.5">
@@ -1059,7 +1289,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
               )}
             </div>
 
-            {/* Enemy Trainer Party Pokeballs */}
             {config.trainer && (
               <div className="flex items-center gap-1 mt-1.5">
                 {enemyTeam.map((em, i) => (
@@ -1074,23 +1303,35 @@ export const BattleView: React.FC<BattleViewProps> = ({
             )}
           </div>
 
-          {/* ENEMY PLATFORM & GBA SPRITE (Top Right) */}
+          {/* ENEMY PLATFORM & GBA SPRITE */}
           <div className="absolute top-12 right-6 sm:right-16 flex flex-col items-center">
-            <div className="relative w-32 h-32 sm:w-40 sm:h-40 flex items-center justify-center">
-              {/* Ground Oval */}
-              <div className="absolute bottom-2 w-32 sm:w-40 h-9 rounded-full bg-black/25 border-2 border-white/30" />
+            <div className="relative w-32 h-32 sm:w-44 sm:h-44 flex items-center justify-center">
+              <div
+                className={`absolute bottom-2 w-32 sm:w-40 h-9 rounded-full border-2 ${
+                  isRaid
+                    ? 'bg-rose-600/40 border-rose-400 shadow-[0_0_25px_rgba(244,63,94,0.8)]'
+                    : activeEnemy.megaFormId
+                    ? 'bg-fuchsia-600/35 border-amber-300 shadow-[0_0_20px_rgba(217,70,239,0.75)]'
+                    : 'bg-black/25 border-white/30'
+                }`}
+              />
 
-              {/* Enemy Sprite */}
               {enemyAnim !== 'caught' && (
                 <img
                   src={
                     activeEnemy.isShiny
-                      ? `/sprites/shiny/${activeEnemy.speciesId}.png`
-                      : `/sprites/front/${activeEnemy.speciesId}.png`
+                      ? assetUrl(`sprites/shiny/${activeEnemySpriteId}.png`)
+                      : assetUrl(`sprites/front/${activeEnemySpriteId}.png`)
                   }
                   alt={enemySp.name}
                   style={{ imageRendering: 'pixelated' }}
-                  className={`relative z-10 w-28 h-28 sm:w-36 sm:h-36 object-contain transition-all duration-200 ${
+                  className={`relative z-10 object-contain transition-all duration-200 ${
+                    isRaid
+                      ? 'w-36 h-36 sm:w-44 sm:h-44 drop-shadow-[0_0_18px_rgba(244,63,94,0.9)]'
+                      : activeEnemy.megaFormId
+                      ? 'w-32 h-32 sm:w-40 sm:h-40 drop-shadow-[0_0_14px_rgba(232,121,249,0.85)]'
+                      : 'w-28 h-28 sm:w-36 sm:h-36'
+                  } ${
                     enemyAnim === 'enter'
                       ? 'scale-110 -translate-y-2'
                       : enemyAnim === 'attack'
@@ -1099,15 +1340,14 @@ export const BattleView: React.FC<BattleViewProps> = ({
                       ? 'opacity-30 translate-x-3'
                       : enemyAnim === 'faint'
                       ? 'translate-y-12 opacity-0'
-                      : 'animate-pulse'
+                      : ''
                   }`}
                 />
               )}
 
-              {/* Poké Ball Catch Animation */}
               {pokeballAnim && (
                 <img
-                  src={`/sprites/items/${pokeballAnim.sprite}`}
+                  src={assetUrl(`sprites/items/${pokeballAnim.sprite}`)}
                   alt="Pokeball"
                   style={{ imageRendering: 'pixelated' }}
                   className={`z-20 w-12 h-12 object-contain transition-transform duration-200 ${
@@ -1124,7 +1364,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
                 />
               )}
 
-              {/* Elemental Hit VFX Burst on Enemy */}
               {vfx?.target === 'enemy' && (
                 <div
                   style={{ backgroundColor: TYPE_COLORS[vfx.type].bg }}
@@ -1134,16 +1373,26 @@ export const BattleView: React.FC<BattleViewProps> = ({
             </div>
           </div>
 
-          {/* PLAYER PLATFORM & BACK SPRITE (Bottom Left) */}
+          {/* PLAYER PLATFORM & BACK SPRITE */}
           {!isSafari && (
             <div className="absolute bottom-0 left-6 sm:left-16 flex flex-col items-center">
               <div className="relative w-32 h-32 sm:w-40 sm:h-40 flex items-end justify-center">
-                <div className="absolute bottom-1 w-36 sm:w-44 h-9 rounded-full bg-black/25 border-2 border-white/30" />
+                <div
+                  className={`absolute bottom-1 w-36 sm:w-44 h-9 rounded-full border-2 ${
+                    activePlayer.megaFormId
+                      ? 'bg-fuchsia-500/35 border-amber-300 shadow-[0_0_20px_rgba(232,121,249,0.8)]'
+                      : 'bg-black/25 border-white/30'
+                  }`}
+                />
                 <img
-                  src={`/sprites/back/${activePlayer.speciesId}.png`}
+                  src={assetUrl(`sprites/back/${activePlayerSpriteId}.png`)}
                   alt={playerSp.name}
                   style={{ imageRendering: 'pixelated' }}
                   className={`relative z-10 w-28 h-28 sm:w-36 sm:h-36 object-contain transition-all duration-200 ${
+                    activePlayer.megaFormId
+                      ? 'scale-110 drop-shadow-[0_0_14px_rgba(250,204,21,0.8)]'
+                      : ''
+                  } ${
                     playerAnim === 'attack'
                       ? 'translate-x-6 -translate-y-3 scale-105'
                       : playerAnim === 'hit'
@@ -1163,15 +1412,20 @@ export const BattleView: React.FC<BattleViewProps> = ({
             </div>
           )}
 
-          {/* PLAYER STATUS CARD (Bottom Right - Authentic GBA Cream Frame + Blue EXP Bar!) */}
+          {/* PLAYER STATUS CARD */}
           {!isSafari && (
-            <div className="absolute bottom-3 right-3 sm:bottom-5 sm:right-6 z-10 w-60 sm:w-72 bg-amber-50/95 border-[3px] border-slate-800 rounded-xl px-3 py-2 shadow-lg text-slate-900">
-              <div className="flex items-center justify-between">
+            <div className="absolute bottom-3 right-3 sm:bottom-5 sm:right-6 z-10 w-60 sm:w-76 bg-amber-50/95 border-[3px] border-slate-800 rounded-xl px-3 py-2 shadow-lg text-slate-900">
+              <div className="flex items-center justify-between gap-1">
                 <div className="font-black text-xs sm:text-sm truncate flex items-center gap-1">
+                  {activePlayer.megaFormId && (
+                    <span className="px-1 py-0.5 rounded bg-gradient-to-r from-fuchsia-600 to-amber-500 text-white text-[9px] font-black">
+                      MEGA
+                    </span>
+                  )}
                   {activePlayer.isShiny && <span className="text-amber-500">✨</span>}
-                  <span>{activePlayer.nickname || playerSp.name}</span>
+                  <span className="truncate">{getActiveDisplayName(activePlayer)}</span>
                 </div>
-                <span className="font-black text-xs text-slate-700">Lv.{activePlayer.level}</span>
+                <span className="font-black text-xs text-slate-700 shrink-0">Lv.{activePlayer.level}</span>
               </div>
 
               <div className="flex items-center gap-1.5 mt-1">
@@ -1210,7 +1464,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
                 </span>
               </div>
 
-              {/* GBA Blue EXP Bar */}
               <div className="flex items-center gap-1.5 mt-1">
                 <span className="text-[9px] font-black text-sky-700">EXP</span>
                 <div className="flex-1 h-1.5 bg-slate-300 rounded-full overflow-hidden">
@@ -1223,19 +1476,40 @@ export const BattleView: React.FC<BattleViewProps> = ({
             </div>
           )}
 
-          {/* Evolution Overlay inside Stage */}
+          {/* MEGA EVOLUTION / PRIMAL REVERSION RAINBOW DNA OVERLAY! */}
+          {megaBurst && (
+            <div className="absolute inset-0 z-30 bg-gradient-to-br from-fuchsia-950/95 via-indigo-950/95 to-amber-950/95 flex flex-col items-center justify-center gap-2 text-white animate-fade-in">
+              <div className="text-xs sm:text-sm font-black tracking-widest text-amber-300 uppercase">
+                {megaBurst.titleTr}
+              </div>
+              <div className="relative flex items-center justify-center">
+                <div className="absolute w-36 h-36 rounded-full bg-gradient-to-r from-pink-500 via-amber-400 to-cyan-400 opacity-50 blur-xl animate-ping" />
+                <img
+                  src={assetUrl(`sprites/front/${megaBurst.spriteId}.png`)}
+                  alt={megaBurst.nameTr}
+                  style={{ imageRendering: 'pixelated' }}
+                  className="relative z-10 w-32 h-32 object-contain drop-shadow-[0_0_24px_rgba(250,204,21,1)]"
+                />
+              </div>
+              <div className="text-xl sm:text-2xl font-black bg-gradient-to-r from-amber-200 via-pink-300 to-cyan-200 bg-clip-text text-transparent">
+                {megaBurst.nameTr}
+              </div>
+            </div>
+          )}
+
+          {/* Standard Level-Up Evolution Overlay */}
           {evoBanner && (
             <div className="absolute inset-0 z-30 bg-slate-950/90 flex flex-col items-center justify-center gap-3 text-white">
               <div className="flex items-center gap-6">
                 <img
-                  src={`/sprites/front/${evoBanner.fromId}.png`}
+                  src={assetUrl(`sprites/front/${evoBanner.fromId}.png`)}
                   alt=""
                   style={{ imageRendering: 'pixelated' }}
                   className="w-24 h-24 opacity-60"
                 />
                 <Sparkles className="w-10 h-10 text-amber-300 animate-spin" />
                 <img
-                  src={`/sprites/front/${evoBanner.toId}.png`}
+                  src={assetUrl(`sprites/front/${evoBanner.toId}.png`)}
                   alt=""
                   style={{ imageRendering: 'pixelated' }}
                   className="w-28 h-28 drop-shadow-[0_0_16px_rgba(250,204,21,0.9)]"
@@ -1247,7 +1521,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
         </div>
 
         {/* BOTTOM GBA DIALOGUE & ACTION PANEL */}
-        <div className="bg-slate-900 border-t-4 border-slate-700 p-3 sm:p-4 grid grid-cols-1 md:grid-cols-12 gap-3 min-h-[155px]">
+        <div className="bg-slate-900 border-t-4 border-slate-700 p-3 sm:p-4 grid grid-cols-1 md:grid-cols-12 gap-3 min-h-[165px]">
           {/* Left Dialogue Box */}
           <div className="md:col-span-5 bg-slate-950 border-2 border-teal-500/60 rounded-xl p-3 flex flex-col justify-between">
             <p className="text-sm sm:text-base font-bold text-slate-100 leading-snug">{message}</p>
@@ -1263,7 +1537,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
 
           {/* Right Action Area */}
           <div className="md:col-span-7">
-            {/* SAFARI ZONE CONTROLS */}
             {isSafari ? (
               <div className="grid grid-cols-2 gap-2.5 h-full">
                 <button
@@ -1271,7 +1544,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
                   onClick={() => handleUseItem('safari-ball')}
                   className="p-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black text-sm flex items-center justify-center gap-2 shadow"
                 >
-                  <img src="/sprites/items/safari-ball.png" alt="" className="w-6 h-6" />
+                  <img src={assetUrl('sprites/items/safari-ball.png')} alt="" className="w-6 h-6" />
                   SAFARİ TOPU ({curSafariBalls})
                 </button>
                 <button
@@ -1297,7 +1570,6 @@ export const BattleView: React.FC<BattleViewProps> = ({
                 </button>
               </div>
             ) : menuMode === 'root' ? (
-              /* STANDARD 4 GBA ROOT BUTTONS */
               <div className="grid grid-cols-2 gap-2.5 h-full">
                 <button
                   disabled={busy}
@@ -1334,60 +1606,105 @@ export const BattleView: React.FC<BattleViewProps> = ({
                 </button>
               </div>
             ) : menuMode === 'fight' ? (
-              /* 4 MOVE BUTTONS WITH GBA TYPE + EFFECTIVENESS PREVIEW! */
-              <div className="grid grid-cols-2 gap-2">
-                {activePlayer.moves.map((slot) => {
-                  const md = MOVES[slot.moveId] || MOVES.tackle;
-                  const tc = TYPE_COLORS[md.type];
-                  const eff =
-                    md.category === 'status'
-                      ? null
-                      : getTypeEffectiveness(md.type, enemySp.types, activeEnemy.ability);
+              <div className="space-y-2">
+                {/* MEGA EVOLUTION TOGGLE BUTTON! */}
+                {availablePlayerMega && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      audio.playSfx('select');
+                      setMegaArmed((v) => !v);
+                    }}
+                    className={`w-full py-1.5 px-3 rounded-xl border-2 font-black text-xs flex items-center justify-between transition ${
+                      megaArmed
+                        ? 'bg-gradient-to-r from-fuchsia-600 via-amber-500 to-cyan-500 border-white text-white shadow-[0_0_16px_rgba(232,121,249,0.9)]'
+                        : 'bg-slate-950 hover:bg-slate-800 border-fuchsia-400/70 text-fuchsia-200'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <img
+                        src={assetUrl('sprites/items/mega-ring.png')}
+                        alt=""
+                        className="w-4 h-4"
+                      />
+                      {megaArmed
+                        ? `✨ MEGA EVRİM HAZIR: ${availablePlayerMega.nameTr.toUpperCase()}!`
+                        : `MEGA EVRİM AKTİF ET → ${availablePlayerMega.nameTr}`}
+                    </span>
+                    <span className="text-[10px] underline">
+                      {megaArmed ? 'İptal Et' : 'Tıkla & Hamle Seç'}
+                    </span>
+                  </button>
+                )}
 
-                  return (
-                    <button
-                      key={slot.moveId}
-                      disabled={busy || slot.pp <= 0}
-                      onClick={() => handleSelectMove(slot.moveId)}
-                      className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border-2 text-left transition flex flex-col justify-between"
-                      style={{ borderColor: tc.bg }}
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="font-black text-xs sm:text-sm text-white truncate">
-                          {md.nameTr}
-                        </span>
-                        <span
-                          style={{ backgroundColor: tc.bg, color: tc.text }}
-                          className="px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0"
-                        >
-                          {TYPE_NAMES_TR[md.type]}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-[11px] text-slate-300 mt-1">
-                        <span>
-                          {md.category === 'physical' ? '💥' : md.category === 'special' ? '🌀' : '✨'}{' '}
-                          {md.power > 0 ? `${md.power} Güç` : 'Durum'} • PP {slot.pp}/{slot.maxPp}
-                        </span>
-                        {eff !== null && eff !== 1 && (
-                          <span
-                            className={`font-black text-[10px] px-1 rounded ${
-                              eff >= 2
-                                ? 'bg-emerald-500/20 text-emerald-300'
-                                : eff === 0
-                                ? 'bg-red-500/30 text-red-300'
-                                : 'bg-amber-500/20 text-amber-300'
-                            }`}
-                          >
-                            {eff >= 2 ? `Süper (${eff}x)` : eff === 0 ? 'Etkisiz (0x)' : `Az (${eff}x)`}
+                {/* 4 MOVE BUTTONS */}
+                <div className="grid grid-cols-2 gap-2">
+                  {activePlayer.moves.map((slot) => {
+                    const md = MOVES[slot.moveId] || MOVES.tackle;
+                    const previewType: PokemonType =
+                      md.type === 'Normal' && md.category !== 'status'
+                        ? activePlayer.ability === 'aerilate'
+                          ? 'Flying'
+                          : activePlayer.ability === 'pixilate'
+                          ? 'Fairy'
+                          : md.type
+                        : md.type;
+                    const tc = TYPE_COLORS[previewType];
+                    const eff =
+                      md.category === 'status'
+                        ? null
+                        : getTypeEffectiveness(
+                            previewType,
+                            activeEnemyTypes,
+                            activeEnemy.ability,
+                            activePlayer.ability
+                          );
+
+                    return (
+                      <button
+                        key={slot.moveId}
+                        disabled={busy || slot.pp <= 0}
+                        onClick={() => handleSelectMove(slot.moveId)}
+                        className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border-2 text-left transition flex flex-col justify-between"
+                        style={{ borderColor: tc.bg }}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-black text-xs sm:text-sm text-white truncate">
+                            {md.nameTr}
                           </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
+                          <span
+                            style={{ backgroundColor: tc.bg, color: tc.text }}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0"
+                          >
+                            {TYPE_NAMES_TR[previewType]}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-slate-300 mt-1">
+                          <span>
+                            {md.category === 'physical' ? '💥' : md.category === 'special' ? '🌀' : '✨'}{' '}
+                            {md.power > 0 ? `${md.power} Güç` : 'Durum'} • PP {slot.pp}/{slot.maxPp}
+                          </span>
+                          {eff !== null && eff !== 1 && (
+                            <span
+                              className={`font-black text-[10px] px-1 rounded ${
+                                eff >= 2
+                                  ? 'bg-emerald-500/20 text-emerald-300'
+                                  : eff === 0
+                                  ? 'bg-red-500/30 text-red-300'
+                                  : 'bg-amber-500/20 text-amber-300'
+                              }`}
+                            >
+                              {eff >= 2 ? `Süper (${eff}x)` : eff === 0 ? 'Etkisiz (0x)' : `Az (${eff}x)`}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             ) : menuMode === 'bag' ? (
-              /* IN-BATTLE BAG ITEMS */
               <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
                 {Object.entries(curBag)
                   .filter(([id, cnt]) => cnt > 0 && ITEMS[id]?.usableInBattle)
@@ -1401,7 +1718,7 @@ export const BattleView: React.FC<BattleViewProps> = ({
                         className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 border border-slate-600 flex items-center gap-2 text-left"
                       >
                         <img
-                          src={`/sprites/items/${it.sprite}`}
+                          src={assetUrl(`sprites/items/${it.sprite}`)}
                           alt=""
                           style={{ imageRendering: 'pixelated' }}
                           className="w-7 h-7 shrink-0"
@@ -1423,10 +1740,8 @@ export const BattleView: React.FC<BattleViewProps> = ({
                 )}
               </div>
             ) : (
-              /* PARTY SWITCH MENU (party or force_switch) */
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-36 overflow-y-auto">
                 {party.map((m, idx) => {
-                  const sp = POKEDEX[m.speciesId];
                   const isActive = idx === playerIdx;
                   return (
                     <button
@@ -1442,14 +1757,14 @@ export const BattleView: React.FC<BattleViewProps> = ({
                       }`}
                     >
                       <img
-                        src={`/sprites/icons/${m.speciesId}.png`}
+                        src={assetUrl(`sprites/icons/${m.speciesId}.png`)}
                         alt=""
                         style={{ imageRendering: 'pixelated' }}
                         className="w-8 h-8 shrink-0"
                       />
                       <div className="min-w-0 flex-1">
                         <div className="text-xs font-bold text-white truncate">
-                          {m.nickname || sp.name}
+                          {getActiveDisplayName(m)}
                         </div>
                         <div className="text-[10px] text-slate-300">
                           Lv.{m.level} • {m.currentHp}/{m.maxHp}
